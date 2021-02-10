@@ -1,0 +1,25 @@
+Step 1: Make sure Python 3 is installed as "python3"
+
+Step 2: Make sure virtualenv is installed. If not:
+pip install virtualenv
+
+Step 3: Set up a virtual environment:
+virtualenv -p python3 /sample/path/environmentname
+
+Step 4: Activate the environment:
+source /sample/path/environmentname/bin/activate
+
+Step 5: Install required Python libraries: 
+pip install -r requirements.txt
+
+Step 6: Compress a file:
+python MUSES_compress_to_file_v2.py --filename /path/to/data/AIRS_OMI_ATrain_L2-O3_2016_04_02_F01_01.hdf
+
+Or if you would like to specify a maximum error tolerance:
+python MUSES_compress_to_file._v2py --filename /path/to/data/AIRS_OMI_ATrain_L2-O3_2016_04_02_F01_01.hdf --max_error 0.00001
+
+
+Step 7: Decompress the new file:
+python MUSES_decompress_from_file_v2.py --filename /path/to/data/AIRS_OMI_ATrain_L2-O3_2016_04_02_F01_01_compressed.hdf
+
+Step 8: Deactivate virtual environment with the "deactivate" command. 
