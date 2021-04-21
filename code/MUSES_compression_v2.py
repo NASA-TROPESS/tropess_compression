@@ -433,7 +433,7 @@ class Multiple_Sounding_Compression:
         return(arr_compressed_bytes)
 
     
-    def remove_bad_soundings(self, compression_mode):
+    def remove_bad_soundings(self, compression_mode, abs_error):
         """
         Function to remove soundings deemed too uncharacteristic to compress. 
         """
@@ -441,17 +441,35 @@ class Multiple_Sounding_Compression:
         orig_dim = int(self.orig_dim)
         fill_value = self.fill_value
         
-        if compression_mode==1:
-            vv_temp = np.zeros((orig_dim,))
-            for i in range(num_soundings):
-                vv_temp[:] = np.diag(self.data_array[i, :, :])
-                ind_temp = np.where(vv_temp != fill_value)
-                if np.any(np.abs(vv_temp[ind_temp]) > 3.0):
-                    self.data_array[i, :, :] = fill_value
         
+        if compression_mode==1 or compression_mode==2 or compression_mode==3 or compression_mode==4:
+            max_num_bits = 11
+            delta_sq_2_bsq = (abs_error**2)*np.power(2, 2*max_num_bits)
             
-        
-        
+            data_array_nofill = np.zeros(self.data_array.shape)
+            data_array_nofill[:] = self.data_array[:]
+            ind_fillvalue = np.where(self.data_array == fill_value)
+            N_fillvalue = len(ind_fillvalue[0])
+            data_array_nofill[ind_fillvalue] = 0.0 
+            data_array_minus_median_nofill = np.zeros(self.data_array.shape)
+            
+            vv_temp = np.zeros((num_soundings,)) 
+            data_array_median = np.zeros((num_soundings, orig_dim, orig_dim,))
+            for i in range(orig_dim):
+                for j in range(orig_dim):
+                    vv_temp[:] = self.data_array[:, i, j]
+                    ind_valid = np.where(vv_temp != fill_value)
+                    data_array_median[ind_valid[0],i,j] = np.median(vv_temp[ind_valid])
+            
+            data_array_minus_median_nofill = data_array_nofill - data_array_median
+            data_array_minus_med_sq_nmlzd =  np.square(data_array_minus_median_nofill)
+            sounding_processed_sums = np.sum(np.sum(data_array_minus_med_sq_nmlzd, axis=1), axis=1)
+            N_total = self.data_array.size - N_fillvalue
+            thresh_temp = delta_sq_2_bsq*N_total
+            while np.sum(sounding_processed_sums) > thresh_temp:
+                ind_temp = np.argmax(sounding_processed_sums)
+                sounding_processed_sums[ind_temp] = 0
+                self.data_array[ind_temp, :, :] = fill_value
     
     
     
@@ -467,7 +485,7 @@ class Multiple_Sounding_Compression:
         if compression_mode == 1 or compression_mode == 3:
             
             #Specify how we flag soundings which we will not compress for a given compression mode. 
-            self.remove_bad_soundings(compression_mode=compression_mode)
+            self.remove_bad_soundings(compression_mode=compression_mode, abs_error=abs_error)
             
             MST = Multiple_Sounding_Transformation(self.data_array, transformation_mode=compression_mode)
             arr_3D, T_left, T_right, T_left_row_sets, T_right_col_sets, supp_inds_mat = MST.apply_transformation()
@@ -589,7 +607,7 @@ class Multiple_Sounding_Compression:
             #conjugate, so only one must be stored. Also, we need only store the upper triangular part of the arrays. 
             
             #Specify how we flag soundings which we will not compress for a given compression mode. 
-            self.remove_bad_soundings(compression_mode=compression_mode)
+            self.remove_bad_soundings(compression_mode=compression_mode, abs_error=abs_error)
             
             MST = Multiple_Sounding_Transformation(self.data_array, transformation_mode=compression_mode)
             arr_3D, T_left, T_right, T_left_row_sets, T_right_col_sets, supp_inds_mat = MST.apply_transformation()
