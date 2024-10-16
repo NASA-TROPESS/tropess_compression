@@ -42,7 +42,7 @@ class Multiple_Sounding_Transformation:
         """
         num_soundings = int(self.num_soundings)
         orig_dim = int(self.orig_dim)
-        supp_inds_mat = np.zeros((num_soundings, orig_dim,))
+        supp_inds_mat = np.zeros((num_soundings, orig_dim,), dtype=int)
         for i_sounding in range(num_soundings):
             #Must take the union of the support indices of each row: 
             for i_row in range(orig_dim):
@@ -238,7 +238,7 @@ class Multiple_Sounding_Compression:
         Assumes support columns are the same as support rows. 
         """
         orig_dim = arr_2D.shape[0]
-        supp_inds_vec = np.zeros((orig_dim,))
+        supp_inds_vec = np.zeros((orig_dim,), dtype=int)
         for i_row in range(orig_dim):
             supp_inds_vec[np.where(arr_2D[i_row, :] != self.fill_value)[0]] = 1
         
@@ -406,7 +406,7 @@ class Multiple_Sounding_Compression:
             
             #Insert sign bit
             if int(arr_compressed_01[i_bit]) != int(arr_sign_i): #Don't rewrite if not necessary
-                arr_compressed_01[i_bit] = arr_sign_i
+                arr_compressed_01[i_bit] = int(arr_sign_i)
             
             #Advance position by one (sign) bit. 
             i_bit = i_bit + 1
@@ -1106,7 +1106,7 @@ class Multiple_Sounding_Decompression:
             self.filtered_mean_mat = filtered_mean_mat
             self.q_divisor_mat = q_divisor_mat
             self.num_r_mat = num_r_mat
-            self.sounding_byte_ind_list = sounding_byte_ind_list 
+            sounding_byte_ind_list = sounding_byte_ind_list 
             
             if sounding_indices==None:
                 sounding_indices = [i for i in range(num_soundings)]
