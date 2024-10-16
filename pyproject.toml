@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=62.6.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tropess_compression"
+authors = [
+  { name = "Matthew Thill", email = "Matthew.D.Thill@jpl.nasa.gov"}
+]
+
+maintainers = [
+  { name = "James McDuffie", email = "James.McDuffie@jpl.nasa.gov" }
+]
+
+description='TROPESS Averaging Kernel and Covariance Compression Tool'
+requires-python = ">=3.8"
+version = "1.0.0"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[project.scripts]
+compress_tropess_file = "tropess_compression.compress_tropess_file:main"
+decompress_tropess_file = "tropess_compression.decompress_tropess_file:main"

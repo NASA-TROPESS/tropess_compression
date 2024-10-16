@@ -1,7 +1,7 @@
 """
 Compress arbitrary MUSES matrices for multiple soundings. 
 
-Copyright 2020, by the California Institute of Technology. ALL RIGHTS RESERVED. United States Government Sponsorship acknowledged. Any commercial use must be negotiated with the Office of Technology Transfer at the California Institute of Technology.
+Copyright 2024, by the California Institute of Technology. ALL RIGHTS RESERVED. United States Government Sponsorship acknowledged. Any commercial use must be negotiated with the Office of Technology Transfer at the California Institute of Technology.
 """
 
 import numpy as np
@@ -9,8 +9,6 @@ import struct
 from timeit import default_timer as timer
 from tqdm import tqdm
 from bitarray import bitarray
-
-
 
 class Multiple_Sounding_Transformation:
     

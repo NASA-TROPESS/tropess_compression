@@ -3,9 +3,9 @@ import numpy as np
 import argparse
 
 import sys
-from MUSES_compression_v2 import Multiple_Sounding_Compression 
+from tropess_compression.akc_compression import Multiple_Sounding_Compression 
 
-def main(args):
+def compress_file(args):
     
     filename = args.filename
     max_error = float(args.max_error) 
@@ -35,8 +35,7 @@ def main(args):
     data_file_new.close()
     data_file_orig.close() 
 
-
-if __name__ == '__main__':
+def main():
     parser = argparse.ArgumentParser()
     
     parser.add_argument('--filename', type=str, default=None,
@@ -45,4 +44,7 @@ if __name__ == '__main__':
                         help='Maximum tolerated error for entries of compressed objects. ')
     
     args = parser.parse_args()
-    main(args)
+    compress_file(args)
+
+if __name__ == '__main__':
+    main()

@@ -3,9 +3,9 @@ import numpy as np
 import argparse
 
 import sys
-from MUSES_compression_v2 import Multiple_Sounding_Decompression 
+from tropess_compression.akc_compression import Multiple_Sounding_Decompression 
 
-def main(args):
+def decompress_file(args):
     
     filename = args.filename 
     
@@ -33,12 +33,14 @@ def main(args):
     data_file_new.close()
     data_file_orig.close() 
 
-
-if __name__ == '__main__':
+def main():
     parser = argparse.ArgumentParser()
     
     parser.add_argument('--filename', type=str, default=None,
                         help='name of single file to decompress')
     
     args = parser.parse_args()
-    main(args)
+    decompress_file(args)
+
+if __name__ == '__main__':
+    main()
