@@ -1,20 +1,14 @@
-import os
 import re
-import shutil
-import tempfile
 import argparse
 import logging
 
 import netCDF4
 import numpy as np
-from nco import Nco
 
 from tropess_compression.akc_compression import Multiple_Sounding_Compression
+from tropess_compression.netcdf_util import remove_netcdf_variables, copy_var_attributes
 
-DEFAULT_COMPRESSION_VAR_RE = r'^(.+_averaging_kernel)|(.+_covariance)$'
-
-# Do not copy these variables from the original source variable
-IGNORE_ATTRS = r'^(_FillValue)$'
+DEFAULT_COMPRESSION_VAR_RE = r'^(.*averaging_kernel)|(.+_covariance)$'
 
 logger = logging.getLogger()
 
@@ -32,18 +26,18 @@ def compress_variable(data_file_input, data_file_output, var_name, max_error, pr
     # to have been removed from the output data file
     dim_name = data_file_input[var_name].name + "_compressed_bytes"
     out_dim = data_file_output.createDimension(dim_name, len(compressed_data))
-    out_var = data_file_output.createVariable(var_name, np.byte, (dim_name,), fill_value=fill_value)
+    out_var = data_file_output.createVariable(var_name, np.byte, (dim_name,), fill_value=fill_value, compression='zlib')
     out_var[...] = compressed_data
 
     # Copy attributes from source variable, except for certain ignored ones
-    for attr_name in data_file_input[var_name].ncattrs():
-        if re.search(IGNORE_ATTRS, attr_name):
-            continue
-
-        setattr(out_var, attr_name, getattr(data_file_input[var_name], attr_name))
+    copy_var_attributes(data_file_input[var_name], out_var)
 
     # Annotate as a compressed variable
-    out_var.compression_help = 'This value can not be read directly. Use decompress_tropess_file: https://github.com/NASA-TROPESS/tropess_compression'
+    out_var.compression_comment = 'This value cannot be read directly. Use decompress_tropess_file: https://github.com/NASA-TROPESS/tropess_compression'
+    out_var.compression_max_error = max_error
+    out_var.uncompressed_dimensions = [ dim_name for dim_name in data_file_input[var_name].dimensions ]
+    out_var.uncompressed_data_type = str(data_file_input[var_name].dtype)
+    out_var.uncompressed_fill_value = fill_value
 
 def compression_variable_list(data_file_input):
     "Find variable names that match a certain regular expression"
@@ -58,22 +52,6 @@ def compression_variable_list(data_file_input):
                 yield v_name
 
     return list(find_compression_vars(data_file_input))
-
-def remove_netcdf_variables(input_filename, var_removal_list, output_filename=None):
-
-    nco = Nco()
-
-    var_list_str = ",".join(var_removal_list)
-    
-    temp_filename = tempfile.mkstemp()[1]
-
-    nco.ncks(input=input_filename, output=temp_filename, options=["-x", f"-v {var_list_str}"])
-
-    if output_filename is not None:
-        shutil.copyfile(temp_filename, output_filename)
-        os.remove(temp_filename)
-
-    return temp_filename
 
 def compress_file(input_filename, output_filename, max_error, progress_bar=False):
 
@@ -97,7 +75,6 @@ def compress_file(input_filename, output_filename, max_error, progress_bar=False
 
     data_file_input.close()
     data_file_output.close()
-
 
 def main():
     parser = argparse.ArgumentParser()
