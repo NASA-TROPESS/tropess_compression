@@ -1,3 +1,5 @@
 numpy
+netCDF4
 tqdm
 bitarray
+nco

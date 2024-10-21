@@ -31,7 +31,6 @@ class Multiple_Sounding_Transformation:
         self.num_soundings = data_array.shape[0]
         self.orig_dim = data_array.shape[-1]
     
-    
     def compute_support_indices(self):
         """
         Compute the indices of the support rows/columns. 
@@ -211,7 +210,7 @@ class Multiple_Sounding_Transformation:
     
 class Multiple_Sounding_Compression:
     
-    def __init__(self, data_array=None, fill_value=-999.0):
+    def __init__(self, data_array=None, fill_value=-999.0, progress_bar=False):
         """
         Takes in multiple data matrices as a 3D numpy array where first dimension is 
         the sounding index and second two dimensions are the sounding's number of 
@@ -228,6 +227,7 @@ class Multiple_Sounding_Compression:
         self.fill_value = fill_value
         self.num_soundings = data_array.shape[0]
         self.orig_dim = data_array.shape[-1]
+        self.progress_bar = progress_bar
     
     
     def compute_support_indices_2D(self, arr_2D):
@@ -569,7 +569,7 @@ class Multiple_Sounding_Compression:
             sounding_byte_list = []
             sounding_byte_ind = num_compressed_bytes_total
             
-            for i_sounding in tqdm(range(num_soundings)):
+            for i_sounding in tqdm(range(num_soundings), disable=not self.progress_bar):
                 
                 arr_2D = arr_3D[i_sounding, :, :]
                 supp_inds_vec = supp_inds_mat[i_sounding, :]
@@ -679,7 +679,7 @@ class Multiple_Sounding_Compression:
             sounding_byte_list = []
             sounding_byte_ind = num_compressed_bytes_total
             
-            for i_sounding in tqdm(range(num_soundings)):
+            for i_sounding in tqdm(range(num_soundings), disable=not self.progress_bar):
                 
                 arr_2D = arr_3D[i_sounding, :, :]
                 
@@ -723,13 +723,14 @@ class Multiple_Sounding_Compression:
         
 class Multiple_Sounding_Decompression:
 
-    def __init__(self, compressed_data_bytes=None):
+    def __init__(self, compressed_data_bytes=None, progress_bar=False):
         """
         Take in the compressed_data_bytes returned by compress_3D function 
         from the Multiple_Sounding_Compression class. 
         """
 
         self.compressed_data_bytes = compressed_data_bytes 
+        self.progress_bar = progress_bar
 
     
     def invert_transformation(self, arr_2D):
@@ -1111,7 +1112,7 @@ class Multiple_Sounding_Decompression:
             
             arr_3D = np.zeros((len(sounding_indices), orig_dim, orig_dim,))
             
-            for i in tqdm(range(len(sounding_indices))): 
+            for i in tqdm(range(len(sounding_indices)), disable=not self.progress_bar): 
                 sounding_ind = int(sounding_indices[i])
                 sounding_byte_ind = sounding_byte_ind_list[sounding_ind]
                 if sounding_ind == num_soundings - 1:
@@ -1220,7 +1221,7 @@ class Multiple_Sounding_Decompression:
             
             arr_3D = np.zeros((len(sounding_indices), orig_dim, orig_dim,))
             
-            for i in tqdm(range(len(sounding_indices))): 
+            for i in tqdm(range(len(sounding_indices)), disable=not self.progress_bar): 
                 sounding_ind = int(sounding_indices[i])
                 sounding_byte_ind = sounding_byte_ind_list[sounding_ind]
                 if sounding_ind == num_soundings - 1:
