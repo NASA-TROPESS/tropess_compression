@@ -1,0 +1,292 @@
+\documentclass{article}
+
+\usepackage{amsmath}
+\usepackage{amssymb} 
+
+\newcommand{\Hil}{\mathcal{H}}
+\newcommand{\Tr}[1]{\text{Tr}\left( #1 \right)} 
+\newcommand{\rk}[1]{\text{rank}\left( #1 \right)} 
+\newcommand{\xx}{\mathbf{x}} 
+\newcommand{\yy}{\mathbf{y}} 
+\newcommand{\Hmat}{\mathbf{H}}
+
+
+\begin{document}
+\title{Compression of Averaging Kernels and Covariance Matrices in TROPESS L2 Ozone Archival Data Products}
+\author{Matthew Thill} 
+\maketitle
+
+\section{Introduction} 
+In this document, we describe the algorithms and software that we have produced to compress the archival TROPESS data products. The bulk of the data stored in the uncompressed files is attributed to one of the following datasets:
+\begin{enumerate} 
+\item Averaging Kernels 
+\item Measurement Error Covariances
+\item Prior Covariances
+\item Total Error Covariances 
+\item Observation Error Covariances 
+\end{enumerate}
+Each of these datasets consists of a set of matrices corresponding to each sounding in the file, and as such, can be viewed as a 3D data object. Typical dimensions of each such 3D object will be $d \times d \times N$, where $d$ corresponds to the number of atmospheric pressure levels (typically $d=67$) and $N$ is the number of soundings within the file, roughly on the order of 30,000-35,000. These are typically stored with single-point precision, so each accounts for approximately 500-600 MB. When a given sounding has no data for some of the $d$ pressure levels (as is the case for levels beyond the surface pressure), the corresponding data entries are populated with a constant ``fill'' value, $v_{\rm fill}$, which by default is -999. 
+
+Our compression algorithm consists of two overall steps. The first is a transformation step, where we apply a transformation to all matrices in a single 3D data object. The second is a compression step, where we apply Rice-Golomb coding to all entries of the transformed matrices. Our algorithm is designed to minimize the data needed to characterize the transformation, while exploiting commonalities over multiple soundings to increase our compression factor in such a way that we can efficiently reconstruct the matrices for individual user-specified soundings. We find, in practice, that we can compress the 3D datasets by a factor of at least 18 without degrading the quality of data assimilations. 
+
+We organize this report as follows: In the first section, we describe our preprocessing methods (Section \ref{sec:preprocessing}) and how we transform the data (Section \ref{sec:transformation}). In Section \ref{sec:compression}, we discuss the compression portion of our algorithm. In Section \ref{sec:dataproduct}, we detail the format of our final compressed data product. In Section \ref{sec:usingsoftware}, we provide a quick user's guide for how to use our software in Python. \textbf{Users may wish to skip directly to Section \ref{sec:usingsoftware} for immediate use.} 
+
+\section{Data Transformation and Compression} 
+Previous studies \cite{Migliorini2008, Mizzi2016} have attempted to find suitable bases in which to transform a data assimilation problem to reduce the dimensionality of the data which must be stored. In the case of atmospheric retrievals, these methods include a combination of selecting a basis in which the transformed retrieval error has unit covariance (eliminating the need to store this covariance information) and in which the bulk of the information content in the retrieved state vector is combined to a small number of basis elements (allowing less significant basis components to be discarded). In practice, neglecting less significant basis components can create systematic errors in the data assimilation, and the extra data needed to store the basis transformation accumulates significantly due to variation between soundings. 
+
+To address these issues, we sought to design a simple transformation which is fast to compute and common to all soundings, and such that the resulting variance in the transformed parameters is low. We combined this with lossy compression, imposing the additional requirement that negligible systematic error would be introduced to the reconstructed data products. 
+
+Our method is straightforward. We will describe each $d \times d \times N$ three-dimensional object as an ordered set of $d \times d$ matrices, $\{\mathbf{A}_k\}_{k = 1}^N$. This is either the set of averaging kernels or one of the sets of covariance matrices. We perform the following steps: 
+\begin{enumerate} 
+\item \textbf{Preprocessing:} We first perform pre-processing to remove corrupt data and replace fill-entries in each $\mathbf{A}_k$ corresponding to ozone levels which were not retrieved. (See Section \ref{sec:preprocessing}) 
+\item \textbf{Transformation:} We use singular value decompositions (SVDs) to form bases for the column and row space of the $\{\mathbf{A}_k\}_{k=1}^N$. We use these bases to perform a common unitary transformation to each $\mathbf{A}_k$. (Sec. \ref{sec:transformation}) 
+\item \textbf{Compression:} We use a variation of Rice-Golomb coding to compress each entry of a transformed $\mathbf{A}_k$ based on the statistics of the corresponding entries of all the transformed matrices. (Sec. \ref{sec:compression}) 
+\end{enumerate} 
+
+
+
+\subsection{Preprocessing} 
+\label{sec:preprocessing} 
+Since each sounding contains data for only a subset of the $d$ pressure levels, it is necessary to reformat them before applying a transformation and compressing. The alternative would be to define different transformation and compression schemes for each subset of pressure levels, which is more complicated and requires extra storage overhead for the transformation and compression parameters. 
+
+For each index $(i, j)$, with $1 \le i,j \le d$, we first identify the sounding indices $k$ corresponding to non-fill entries $\mathbf{A}_k[i, j]$: 
+\begin{align} 
+{\mathcal{I}}_{i,j} := \{k~:~\mathbf{A}_k[i, j] \ne v_{\rm fill}\}. 
+\end{align} 
+We compute the mean of all the corresponding non-fill entries: 
+\begin{align} 
+\overline{m}_{ij} := \frac{1}{|{\mathcal{I}}_{i,j}|} \sum_{k \in {\mathcal{I}}_{i,j}} {\mathbf{A}}_k[i, j]. 
+\end{align} 
+We then define the modified matrix ${\mathbf{\tilde{A}}}_k$ to have entries
+\begin{align} 
+{\mathbf{\tilde{A}}}_k[i, j] = \begin{cases} {\mathbf{A}}_k[i, j], & k \notin {\mathcal{I}}_{i, j} \\ \overline{m}_{ij}, & k \in {\mathcal{I}}_{i, j} \end{cases}. 
+\end{align} 
+In addition, we also track the indices of the $d$ levels for which each sounding has data with a support vector $\mathbf{s}_k \in \{0, 1\}^d$, where $\mathbf{s}_k[\ell] = 1$ if and only if data exists for level $\ell$ in sounding $k$. 
+
+\subsection{Transformation} 
+\label{sec:transformation} 
+Next, we construct a common transformation to be applied to all the pre-processed matrices $\mathbf{\tilde{A}}_k$. We begin by computing the SVDs
+\begin{align} 
+\begin{bmatrix} \mathbf{\tilde{A}}_1 & \hdots & \mathbf{\tilde{A}}_N \end{bmatrix} & = \mathbf{U}_1 \mathbf{\Sigma}_1 \mathbf{V}_1^H, \label{eqn:svd_long} \\
+\begin{bmatrix} \mathbf{\tilde{A}}_1 \\ \vdots \\ \mathbf{\tilde{A}}_N \end{bmatrix} \hspace{20pt} & = \mathbf{U}_2 \mathbf{\Sigma}_2 \mathbf{V}_2^H. \label{eqn:svd_tall}
+\end{align} 
+The columns of $\mathbf{U}_1$ form a good representation of the column space of the $\mathbf{\tilde{A}}_k$ in the sense that most of the columns of each $\mathbf{\tilde{A}}_k$ can be approximated by a linear combination of a small number of columns of $\mathbf{U}_1$. Likewise, the rows of $\mathbf{V}_2^H$ are a good representation of the rows of the $\mathbf{\tilde{A}}_k$. When we apply the transformation 
+\begin{align} 
+\mathbf{\tilde{A}}_k \mapsto \mathbf{B}_k := \mathbf{U}_1^H \mathbf{\tilde{A}}_k \mathbf{V}_2, \label{eqn:2_sided_transformation} 
+\end{align} 
+we find that each $\mathbf{B}_k$ is close to being a diagonal matrix, and that for most of the indices $(i, j)$ there is little variation among the entries $\{\mathbf{B}_k[i, j]\}_{k = 1}^N$.  Furthermore, the transformation in (\ref{eqn:2_sided_transformation}) has the desirable property that it is unitary: for two square matrices $\mathbf{M}_1$ and $\mathbf{M}_2$ in ${\mathbb{R}}^{d \times d}$
+\begin{align} 
+\nonumber {\rm vec}(\mathbf{U}_1^H \mathbf{M}_1 \mathbf{V}_2)^H \cdot {\rm vec}(\mathbf{U}_1^H \mathbf{M}_2 \mathbf{V}_2) & = \Tr{\mathbf{V}_2^H \mathbf{M}_1^H \mathbf{U}_1 \mathbf{U}_1^H \mathbf{M}_2 \mathbf{V}_2} \\ 
+\nonumber & = \Tr{\mathbf{M}_1^H \mathbf{M}_2} \\ 
+\nonumber & = {\rm vec}(\mathbf{M}_1)^H \cdot {\rm vec}(\mathbf{M}_2). 
+\end{align} 
+These properties allow us to achieve a higher level of compression without introducing systematic error, as we will see in Section \ref{sec:compression}. In order to specify our transformation, we need only store the two matrices $\mathbf{U}_1$ and $\mathbf{V}_2$ in our final data product. The $\mathbf{B}_k$ matrices are now ready to be compressed. 
+
+\subsubsection{Symmetric Matrices}
+\label{sec:symmetric_transformation} 
+In the case of the $\mathbf{A}_k$ being symmetric matrices, as is true for any of the aforementioned covariance data objects, we see that we may take $\mathbf{U}_1$ and $\mathbf{V}_2$ to be equal in Equations (\ref{eqn:svd_long}), (\ref{eqn:svd_tall}), and subsequently (\ref{eqn:2_sided_transformation}). In this case, our transformation takes the form 
+\begin{align} 
+\mathbf{\tilde{A}}_k \mapsto \mathbf{B}_k := \mathbf{U}_1^H \mathbf{\tilde{A}}_k \mathbf{U}_1, \label{eqn:1_sided_transformation} 
+\end{align} 
+and we need only store $\mathbf{U}_1$ in our final data product. 
+
+\subsection{Compression}
+\label{sec:compression} 
+For each index $(i, j)$, $1 \le i,j \le d$, we use a variation of Rice-Golomb compression applied to the elements 
+\begin{align} \mathcal{B}_{i,j} := \{\mathbf{B}_k[i, j]\}_{k = 1}^N.
+\end{align} 
+For each set $\mathcal{B}_{i,j}$, we compute the mean and the variance
+\begin{align} 
+\mu_{ij} & = \frac{1}{N} \sum_{k = 1}^N \mathbf{B}_k[i, j], \\ 
+\sigma^2_{ij} & = \frac{1}{N} \sum_{k = 1}^N (\mathbf{B}_k[i, j] - \mu_{ij})^2. 
+\end{align}  
+Then for each sounding $k$, we construct a concise bit-encoding of the differences 
+\begin{align} 
+\delta^{(k)}_{ij} := \mathbf{B}_k[i,j] - \mu_{ij}, ~ 1 \le i,j \le d. 
+\end{align} 
+We will be using lossy compression so that we may use our bit-encoding to construct an estimate $\hat{\delta}^{(k)}_{ij}$ for $\delta^{(k)}_{ij}$. We specify a maximum error parameter, $\Delta > 0$, defined such that $| \hat{\delta}^{(k)}_{ij} - \delta^{(k)}_{ij}|\le \Delta$. For each index $(i, j)$, we select a quantization parameter $Q_{ij} > 0$, to be defined (see Sec. \ref{sec:Q_ij}). Then for each $\delta^{(k)}_{ij}$, we compute 
+\begin{align} 
+s^{(k)}_{ij} & := {\rm sign}(\delta^{(k)}_{ij}), \\ 
+q^{(k)}_{ij} & := \left \lfloor \frac{|\delta^{(k)}_{ij}|}{Q_{ij}} \right \rfloor, \\ 
+r^{(k)}_{ij} & := \left \lfloor \frac{|\delta^{(k)}_{ij}| - q^{(k)}_{ij} Q_{ij}}{2\Delta} \right \rfloor. 
+\end{align} 
+Loosely speaking, we have divided the real line into intervals of length $Q_{ij}$ and divided each such interval into subintervals of length $2\Delta$. The values of $s^{(k)}_{ij}$ and $q^{(k)}_{ij}$ specify which length-$Q_{ij}$ interval contains $\delta^{(k)}_{ij}$, and the value of $r^{(k)}_{ij}$ designates in which of the $\frac{Q_{ij}}{2 \Delta}$ subintervals it lies. In compressed form, we store a single bit representing the sign $s^{(k)}_{ij}$, followed by $q^{(k)}_{ij} + 1$ bits representing $q^{(k)}_{ij}$, consisting of $q^{(k)}_{ij}$ zeros followed by a terminating `1'. Finally, we append $\max \left( 0, \left \lceil \log_2\left( \frac{Q_{ij}}{2 \Delta} \right) \right \rceil \right)$ bits to encode the binary representation of $r^{(k)}_{ij}$. We concatenate all of these bits into a binary vector $\mathbf{b}^{(k)}_{ij} \in \{0, 1\}^{q^{(k)}_{ij} + 2 + \max(0, \left \lceil \log_2\left( {Q_{ij}} / {2 \Delta} \right) \right \rceil )}$. 
+
+Given $\mathbf{b}^{(k)}_{ij}$ along with $Q_{ij}$ and $\Delta$, we can exactly decode $s^{(k)}_{ij}$, $q^{(k)}_{ij}$ and $r^{(k)}_{ij}$, from which we construct our estimate as 
+\begin{align} 
+\hat{\delta}^{(k)}_{ij} = s^{(k)}_{ij} \cdot \left( q^{(k)}_{ij} Q_{ij} + 2 r^{(k)}_{ij} \Delta + \Delta \right). 
+\end{align} 
+Thus, $\hat{\delta}^{(k)}_{ij}$ is chosen to be the center of the length-$2 \Delta$ subinterval containing ${\delta}^{(k)}_{ij}$, so our quantization error is at most $\Delta$ by construction. 
+
+\subsubsection{Avoiding Systematic Error}
+\label{sec:no_systematic_error} 
+An important observation is that this compression method avoids introducing systematic error in the reconstructed matrices after decompressing and inverting the transformation described in Section \ref{sec:transformation}. There are two reasons for this: 1) The quantization error for each entry, $\hat{\delta}^{(k)}_{ij} - {\delta}^{(k)}_{ij}$, is approximately uniformly distributed over the interval $[-\Delta, \Delta]$ and independent for all $i$ and $j$, and 2) the transformation described in Section \ref{sec:transformation} is unitary. The quantization error for sounding $k$ can be represented by a random matrix $\mathbf{E}_k$ whose $(i,j)^{th}$ entry is equal to $\hat{\delta}^{(k)}_{ij} - {\delta}^{(k)}_{ij}$. After inverting the transformation, this will map to an error pattern given by $\mathbf{U}_1 \mathbf{E}_k \mathbf{V}_2^H$. Since the transformation is unitary, we can describe the inverse transformation with a unitary matrix $\mathbf{W} \in \mathbb{R}^{d^2 \times d^2}$ applied to the vectorization of $\mathbf{E}_k$. Explicitly, we can express this as $\mathbf{W} = \mathbf{V}_2 \otimes \mathbf{U}_1$. Since the entries of ${\rm vec}(\mathbf{E}_k)$ are iid uniform on $[- \Delta, \Delta]$, we have 
+\begin{align} 
+E(\mathbf{W} \cdot {\rm vec}(\mathbf{E}_k)) & = \mathbf{0}, \\ 
+{\rm Cov}(\mathbf{W} \cdot {\rm vec}(\mathbf{E}_k) ) & = E(\mathbf{W} \cdot {\rm vec}(\mathbf{E}_k) {\rm vec}(\mathbf{E}_k)^H \mathbf{W}^H) \\ 
+& = \mathbf{W} \cdot E({\rm vec}(\mathbf{E}_k) {\rm vec}(\mathbf{E}_k)^H )\cdot  \mathbf{W}^H \\ 
+& = \mathbf{W} \cdot (\sigma^2 \mathbf{I}_{d^2}) \cdot  \mathbf{W}^H \\ 
+& = \sigma^2 \mathbf{I}_{d^2}, 
+\end{align} 
+where $\mathbf{I}_{d^2}$ is the $d^2 \times d^2$ identity matrix, and $\sigma^2$ is the variance of each entry of $\mathbf{E}_k$, which for the uniform distribution is $\sigma^2 = \frac{\Delta^2}{3}$. Thus, the entries of the reconstructed matrix have uncorrelated, identically distributed, zero-mean error. 
+
+%For any potential systematic error pattern $\mathbf{M}_{\rm sys}$ arising in the reconstructed matrix, we can verify that 
+%\begin{align} 
+%\mathbf{M}_{\rm sys}^H \mathbf{U}_1 \mathbf{E}_k \mathbf{V}_2^H & = 
+%\end{align} 
+
+\subsubsection{Selecting the Quantization Parameters} 
+\label{sec:Q_ij} 
+We return now to the question of how to choose the quantization parameters $Q_{ij}$. In general, the $Q_{ij}$ can be chosen on a case-by-case basis to optimize our compression ratio. Our final product stores the $Q_{ij}$, so our decompression algorithm allows for its specification by a user. But in practice, we have designed a method to select $Q_{ij}$ in an automated fashion. 
+
+We approximate the $\delta^{(k)}_{ij}$ as being normally distributed, 
+\begin{align} 
+\delta^{(k)}_{ij} \sim {\mathcal{N}}(0, \sigma^2_{ij}). 
+\end{align} 
+Let $c_{ij}(x)$ denote the cumulative distribution function of $|\delta^{(k)}_{ij}|$, the absolute value of the normally-distributed variable. Its derivative is then the associated probability density function 
+\begin{align} 
+c'_{ij}(x) &= \frac{2}{\sigma_{ij} \sqrt{2 \pi}} \cdot e^{- \frac{x^2}{2 \sigma_{ij}^2}}. 
+\end{align} 
+The expected number of bits needed to encode $\delta^{(k)}_{ij}$, for given $\Delta$ and $Q_{ij}$, is then 
+\begin{align} 
+E({\rm length}(\mathbf{b}^{(k)}_{ij})) & = 2 + f_1(Q_{ij}) + f_2(Q_{ij}), \label{eqn:expected_bit_length} 
+%E({\rm length}(\mathbf{b}^{(k)}_{ij})) & = 2 + \sum_{q = 1}^\infty q \cdot \left[ c_{ij}(q Q_{ij}) - c_{ij}((q-1) Q_{ij}) \right] + \max\left( 0, \left \lceil \log_2\left( \frac{Q_{ij}}{2 \Delta} \right) \right \rceil \right) 
+\end{align} 
+where 
+\begin{align} 
+f_1(Q_{ij}) & := \sum_{q = 1}^\infty q \cdot \left[ c_{ij}(q Q_{ij}) - c_{ij}((q-1) Q_{ij}) \right] 
+\end{align} 
+is the expected length of the bit-encoding of $q^{(k)}_{ij}$, and 
+\begin{align} 
+f_2(Q_{ij}) & := \max\left( 0, \left \lceil \log_2\left( \frac{Q_{ij}}{2 \Delta} \right) \right \rceil \right) 
+\end{align} 
+is the length of the bit-encoding of $r^{(k)}_{ij}$. We wish to minimize Equation (\ref{eqn:expected_bit_length}) with respect to $Q_{ij}$. Toward this end, we define the relaxation of $f_2(Q_{ij})$, 
+\begin{align} 
+f_3(Q_{ij}) & := \log_2\left( \frac{Q_{ij}}{2 \Delta} \right) \\ 
+& = \frac{1}{\ln 2} \left( \ln (Q_{ij}) - \ln (2 \Delta) \right), 
+\end{align} 
+and we consider the relaxed optimization 
+\begin{align} 
+{\rm minimize}_{Q_{ij}} & ~ f_1(Q_{ij}) + f_3(Q_{ij}). 
+\end{align} 
+Examining the derivative of $f_1(Q_{ij})$, 
+\begin{align} 
+\frac{d f_1}{d Q_{ij}} & = \sum_{q = 1}^\infty q \cdot \left[ q \cdot c_{ij}'(q Q_{ij}) - (q-1) \cdot c_{ij}'((q-1) Q_{ij}) \right] \\ 
+& = \frac{2}{\sigma_{ij} \sqrt{2 \pi}} \cdot \sum_{q = 1}^\infty \left[ q^2 \cdot e^{- \frac{q^2 Q_{ij}^2}{2 \sigma_{ij}^2}} - q(q-1) \cdot e^{- \frac{(q-1)^2 Q_{ij}^2}{2 \sigma_{ij}^2}} \right] \\ 
+& = \frac{2}{\sigma_{ij} \sqrt{2 \pi}} \cdot \sum_{{q} = 1}^\infty \left[ {q}^2 \cdot w(Q_{ij})^{{q}^2} - q (q-1) \cdot w(Q_{ij})^{(q-1)^2} \right] \label{eqn:sub_wq} \\ 
+& =  \frac{2}{\sigma_{ij} \sqrt{2 \pi}} \cdot  \left[ \sum_{q = 1}^\infty {q}^2 \cdot w(Q_{ij})^{{q}^2} - \sum_{\tilde{q} = 1}^\infty (\tilde{q} + 1) \tilde{q} \cdot w(Q_{ij})^{\tilde{q}^2} \right] \label{eqn:sub_qtilde} \\ 
+& = \frac{2}{\sigma_{ij} \sqrt{2 \pi}} \cdot  \left[ \sum_{q = 1}^\infty ({q}^2 - (q + 1)q) \cdot w(Q_{ij})^{{q}^2}  \right] \\ 
+& = - \frac{2}{\sigma_{ij} \sqrt{2 \pi}} \cdot \sum_{q = 0}^\infty q \cdot w(Q_{ij})^{{q}^2} \label{eqn:df1dQij_negative} \\ 
+& = - \frac{2}{\sigma_{ij} \sqrt{2 \pi}} \cdot \sum_{q = 0}^\infty \frac{d}{dq} \left( \frac{w(Q_{ij})^{{q}^2}}{2 \ln w(Q_{ij})} \right)
+\end{align} 
+where in Equation (\ref{eqn:sub_wq}) we have substituted $w(Q_{ij}) := \exp \left( -\frac{Q_{ij}^2}{2 \sigma_{ij}} \right)$, and in Equation (\ref{eqn:sub_qtilde}) we have defined $\tilde{q} := q - 1$ and dropped the leading trivial term of the second summation. Notice from Equation (\ref{eqn:df1dQij_negative}) that $d f_1 / d Q_{ij}$ is strictly negative, so $f_1(Q_{ij})$ is decreasing in $Q_{ij}$. We can approximate the final sum as the integral 
+\begin{align} 
+\frac{d f_1}{d Q_{ij}} & \approx - \frac{2}{\sigma_{ij} \sqrt{2 \pi}} \cdot \int_{q = 0}^\infty \frac{d}{dq} \left( \frac{w(Q_{ij})^{{q}^2}}{2 \ln w(Q_{ij})} \right) dq \\ 
+& = \frac{2}{\sigma_{ij} \sqrt{2 \pi} \ln w(Q_{ij})} \\ 
+& = - \frac{2 \sigma_{ij}}{\sqrt{2 \pi} Q_{ij}^2}. 
+\end{align} 
+The derivative of $f_3(Q_{ij})$ with respect to $Q_{ij}$ is simple to compute: 
+\begin{align} 
+\frac{df_3}{dQ_{ij}} & = \frac{1}{Q_{ij} \ln 2}. 
+\end{align} 
+Setting $\frac{d f_1}{d Q_{ij}} + \frac{d f_3}{d Q_{ij}} = 0$, and solving for $Q_{ij}$, we find that 
+\begin{align} 
+\hat{Q}_{ij} := \arg\min_{Q_{ij}} ~ \left( f_1(Q_{ij}) + f_3(Q_{ij}) \right) = \frac{2 \sigma_{ij} \ln 2}{\sqrt{2 \pi}}.  
+\end{align} 
+If $\hat{Q}_{ij} \ge 2 \Delta$, we can see that setting $Q_{ij} = \hat{Q}_{ij}$ will minimize the expected length of $\mathbf{b}^{(k)}_{ij}$. Otherwise, we have $f_2(\hat{Q}_{ij}) = 0$. In this case, since $f_1(Q_{ij})$ is decreasing in $Q_{ij}$ as previously noted, the minimum expected length is achieved by increasing $Q_{ij}$ to $2 \Delta$. Thus, for a given maximum error $\Delta$, we opt to set 
+\begin{align} 
+Q_{ij} = \max \left( \frac{2 \sigma_{ij} \ln 2}{\sqrt{2 \pi}}, ~ 2 \Delta \right). 
+\end{align} 
+
+\section{Final Data Product} 
+\label{sec:dataproduct} 
+We organize our final compressed data product in such a way that a user-specified subset of the soundings can be quickly decompressed independently from all other soundings. Our final data product is in the form of a byte array, with initial bytes containing information needed to reconstruct all soundings, followed by subsequent packets of bytes containing data specific to each individual sounding. Thus, given a user-specified subset of soundings to decompress, our decompression algorithm only reads in the initial bytes (common to all soundings), and the byte packets corresponding to the requested soundings. 
+
+The initial bytes of common information to all soundings, in order, consist of 
+\begin{enumerate} 
+\item A single byte encoding the compression mode (`1' for asymmetric matrices such as averaging kernels, `2' for symmetric matrices such as covariances), 
+\item 8 bytes encoding the subinterval length $2 \Delta$, stored with double precision, 
+\item 8$d^2$ bytes for each of the entries of the left transformation matrix $\mathbf{U}_1$, stored with double precision in row-major order, 
+\item 8$d^2$ bytes for each of the entries of the right transformation matrix $\mathbf{V}_2$, stored with double precision in row-major order, 
+\begin{itemize} 
+\item These bytes are omitted in the case of symmetric matrices, as commented in Section \ref{sec:symmetric_transformation}. 
+\end{itemize} 
+\item 8$d^2$ bytes for the entries $Q_{ij}$, stored with double precision in row-major order when considered as the matrix $[Q_{ij}]$, 
+\item 8$d^2$ bytes for the number of length-$2 \Delta$ subintervals for each index, specifically $\left \lceil \frac{Q_{ij}}{2 \Delta} \right \rceil$, each stored (in row-major order) as an unsigned long long integer, 
+\item 8$N$ bytes for the $N$ locations of the individual sounding-specific data packets, each stored as an unsigned long long integer index representing the starting position of the sounding's data packet in this array of bytes. \label{item:sounding_data_location} 
+\end{enumerate} 
+
+Following this preamble, we sequentially add the data packets which are specific to each of the $N$ soundings. Note that within our final compressed object, the starting byte position of each packet is referenced in item \ref{item:sounding_data_location} above, allowing for our decompressor to quickly retrieve it in the event that a user wants only the information for a single sounding. Each packet consists of a sequence of bits, followed by between 1 and 7 zero-bits such that the total number of bits is a multiple of 8. The bit string is partitioned into bytes, interpreted with big-endian format. The bit string itself, as described before, consists of 
+\begin{enumerate}
+\item A single bit to encode the sign $s_{ij}^{(k)}$ (a `0' if $s_{ij}^{(k)} < 0$ and a `1' otherwise), 
+\item $q_{ij}^{(k)} + 1$ bits to encode the value of $q_{ij}^{(k)}$, in the form of $q_{ij}^{(k)}$ `0's followed by a terminating `1,' 
+\item $\max \left( 0, \left \lceil \log_2\left( \frac{Q_{ij}}{2 \Delta} \right) \right \rceil \right)$ bits to encode the binary representation of $r^{(k)}_{ij}$. The most significant bit in the binary representation is first, and the least significant is last. For example, if $\left \lceil  \log_2 \left( \frac{Q_{ij}}{2 \Delta} \right) \right \rceil = 8$, the number 13 would be encoded as `00001101.' 
+\end{enumerate}
+Each of these sets of $1 + (q_{ij}^{(k)} + 1) + \max \left( 0, \left \lceil \log_2\left( \frac{Q_{ij}}{2 \Delta} \right) \right \rceil \right)$ bits is stored in sequence for the $(i,j)$ entries of the $k^{th}$ sounding, in row-major order of $(i, j)$ when interpreted as the indices of a matrix. As mentioned above, the sequence is then padded with 1-7 zero-bits to form the complete packet of bytes for the $k^{th}$ sounding. The byte packets for each sounding are then stored in order for $k = 1, 2, ..., N$. 
+
+
+\section{Using the Software} 
+\label{sec:usingsoftware}
+
+Our software is written in Python, and the main library is \texttt{TROPESS\_compression\_v2.py}. To run the compression and decompression algorithms, 
+\begin{enumerate}
+\item Install Python 3 as ``python3.''
+\item Make sure virtualenv is installed. If not, install it using pip with the command \texttt{pip install virtualenv}. 
+\item Set up a Python virtual environment: $$\texttt{virtualenv -p python3 /sample/path/environmentname}.$$ 
+\item Install the required Python libraries using our provided ``requirements.txt'' file:  \texttt{pip install -r requirements.txt}. 
+\end{enumerate} 
+
+To compress a large data object, such as the set of averaging kernels, they must be stored as a numpy 3D array, with dimensions $N \times d \times d$. For example, in a Python terminal, \\ \\
+\noindent 
+\texttt{import h5py} \\
+\texttt{import numpy as np} \\
+\texttt{from TROPESS\_compression\_v2 import Multiple\_Sounding\_Compression} \\ \\
+\noindent 
+\texttt{data\_file = h5py.File(`path/to/data/AIRS\_OMI\_ATrain\_L2-O3\_2016\_04\_02\_F01\_01.hdf', `r')} \\
+\texttt{AK\_dataset = data\_file[`HDFEOS/SWATHS/O3NadirSwath/Data Fields/AveragingKernel']} \\
+\texttt{AK\_nparray = np.array(AK\_dataset)} \\
+\texttt{data\_file.close()} \\ \\
+\noindent 
+\texttt{MSC = Multiple\_Sounding\_Compression(AK\_nparray)} \\
+\texttt{compressed\_bytes = MSC.compress\_3D()} \\
+
+By default, the compression will treat the matrices as asymmetric (``compression mode 1''), and uses a subinterval half-width of $\Delta = 0.00005$ which has been found to introduce negligible error to all large data objects in testing. For symmetric matrices, we can use ``compression mode 2,'' achieving roughly twice as much compression, by altering the final line to $$\texttt{compressed\_bytes = MSC.compress\_3D(compression\_mode=2)}.$$ The value of $\Delta$ can be changed using the input parameter \texttt{max\_error}. For instance, to double the error threshold, we may use the line $$\texttt{compressed\_bytes = MSC.compress\_3D(max\_error=0.0001)}$$ or $$\texttt{compressed\_bytes = MSC.compress\_3D(compression\_mode=2, max\_error=0.0001)}.$$ We emphasize again that the parameter $\Delta$ represents the maximum entry-wise error in the \textit{transformed} data space. Since our transformation is unitary, the maximum error on the final reconstructed data will be close to $\Delta$, but not identical. 
+
+\texttt{compressed\_bytes} will be a Python bytearray object which can be stored directly in an hdf5 or netcdf file. The object can be decompressed using the following code: \\ \\ 
+\noindent 
+\texttt{from TROPESS\_compression\_v2 import Multiple\_Sounding\_Decompression} \\
+\texttt{MSD = Multiple\_Sounding\_Decompression(compressed\_bytes)} \\ 
+\texttt{AK\_nparray\_decompressed = MSD.decompress\_3D()} \\ 
+
+\noindent 
+This will by default decompress all $N$ soundings. We warn users that this can quickly accumulate large volumes of memory. A small subset of soundings to be decompressed can be specified with the \texttt{sounding\_inds} input parameter by creating a list of the desired indices. Note that Python uses zero-indexing. For instance, if soundings 1000 through 1999 are desired, we can specify this with the lines \\ \\ 
+\noindent 
+\texttt{index\_list = [i for i in range(1000, 2000)]} \\ 
+\texttt{AK\_nparray\_decompressed = MSD.decompress\_3D(sounding\_inds=index\_list)} \\ \\ 
+\noindent 
+Similarly, soundings 0-99 can be specified by setting \texttt{index\_list = [i for i in range(100)]}, and so on. 
+
+
+
+%#Store 1 byte for the compression mode, four bytes for the original dimension, 8 bytes for the num_soundings, 
+%            #8 bytes for abs_error, 8*orig_dim*orig_dim bytes for each of T_left and T_right, 
+%            #8*orig_dim*orig_dim bytes for each of the filtered_mean_mat, q_divisor_mat, and num_r_mat, 
+%            #Followed by 8*num_soundings bytes for the starting byte locations of each sounding, 
+%            #Followed by the bytes for each sounding. 
+
+%Talk about decompression method (retrieve common information, then sounding-specific information). 
+
+
+
+%\texttt{Test.py} 
+
+\begin{thebibliography}{100} 
+
+\bibitem{Migliorini2008} S. Migliorini, C. Piccolo, and C. D. Rogers, ``Use of the Information Content in Satellite Measurements for an Efficient Interface to Data Assimilation,'' \textit{Monthly Weather Review}, \textbf{136} (7): 2633-2650, 2008. 
+
+\bibitem{Mizzi2016} A. P. Mizzi, A. F. Arellano Jr., D. P. Edwards, J. L. Anderson, and G. G. Pfister, ``Assimilating compact phase space retrievals of atmospheric composition with WRF-Chem/DART: a regional chemical transport/ensemble Kalman filter data assimilation system," Geoscientific Model Development, 9, 965-978, 2016. 
+
+\end{thebibliography} 
+
+
+\end{document} 
