@@ -57,7 +57,7 @@ def decompress_file(input_filename, output_filename, progress_bar=False):
     logger.debug(f"Creating modified destination file: {output_filename} from {input_filename}")
     
     # Remove the compressed variables from the destination file to overwrite with decompressed variables
-    remove_netcdf_variables(input_filename, vars_to_decompress, output_filename)
+    remove_netcdf_variables(input_filename, output_filename, vars_to_decompress)
 
     # Open output for copying compression output
     data_file_output = netCDF4.Dataset(output_filename, 'a')

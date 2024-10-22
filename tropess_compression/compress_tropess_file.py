@@ -63,7 +63,7 @@ def compress_file(input_filename, output_filename, max_error, progress_bar=False
     logger.debug(f"Creating modified destination file: {output_filename} from {input_filename}")
     
     # Remove the compression variable from the destination file
-    remove_netcdf_variables(input_filename, vars_to_compress, output_filename)
+    remove_netcdf_variables(input_filename, output_filename, vars_to_compress)
 
     # Open output for copying compression output
     data_file_output = netCDF4.Dataset(output_filename, 'a')

@@ -9,21 +9,37 @@ from nco import Nco
 # Do not copy these variables from the original source variable
 IGNORE_ATTRS_PATTERN = r'^(_FillValue|compression_.*|uncompressed_.*)$'
 
-def remove_netcdf_variables(input_filename, var_removal_list, output_filename=None):
+def call_ncks(input_filename, output_filename, options, overwrite=False):
 
     nco = Nco()
 
+    use_temp = False
+    if os.path.realpath(input_filename) == os.path.realpath(output_filename):
+        if not overwrite:
+            raise IOError(f"Will not overwrite original file {input_filename}")
+        
+        temp_fd, dest_filename = tempfile.mkstemp()
+        use_temp = True
+    else:
+        dest_filename = output_filename
+
+    nco.ncks(input=input_filename, output=dest_filename, options=options)
+
+    if not os.path.exists(dest_filename):
+        raise IOError(f"ncks failed to create {dest_filename} from {input_filename}")
+    
+    if use_temp:
+        shutil.copyfile(dest_filename, output_filename)
+        os.remove(dest_filename)
+        os.close(temp_fd)
+
+def remove_netcdf_variables(input_filename, output_filename, var_removal_list):
+
     var_list_str = ",".join(var_removal_list)
     
-    temp_filename = tempfile.mkstemp()[1]
+    ncks_options=["-x", f"-v {var_list_str}"]
 
-    nco.ncks(input=input_filename, output=temp_filename, options=["-x", f"-v {var_list_str}"])
-
-    if output_filename is not None:
-        shutil.copyfile(temp_filename, output_filename)
-        os.remove(temp_filename)
-
-    return temp_filename
+    return call_ncks(input_filename, output_filename, options=ncks_options)
 
 def copy_var_attributes(source_var, dest_var, ignore_pattern=IGNORE_ATTRS_PATTERN):
 
