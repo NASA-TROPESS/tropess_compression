@@ -33,13 +33,19 @@ def call_ncks(input_filename, output_filename, options, overwrite=False):
         os.remove(dest_filename)
         os.close(temp_fd)
 
-def remove_netcdf_variables(input_filename, output_filename, var_removal_list):
+def remove_netcdf_variables(input_filename, output_filename, var_removal_list, **kwargs):
 
     var_list_str = ",".join(var_removal_list)
     
     ncks_options=["-x", f"-v {var_list_str}"]
 
-    return call_ncks(input_filename, output_filename, options=ncks_options)
+    return call_ncks(input_filename, output_filename, options=ncks_options, **kwargs)
+
+def remove_unlimited_dims(input_filename, output_filename, **kwargs):
+    
+    ncks_options=["--fix_rec_dmn all"]
+
+    return call_ncks(input_filename, output_filename, options=ncks_options, **kwargs)
 
 def copy_var_attributes(source_var, dest_var, ignore_pattern=IGNORE_ATTRS_PATTERN):
 

@@ -6,7 +6,7 @@ import netCDF4
 import numpy as np
 
 from tropess_compression.akc_compression import Multiple_Sounding_Compression
-from tropess_compression.netcdf_util import remove_netcdf_variables, copy_var_attributes
+from tropess_compression.netcdf_util import remove_netcdf_variables, remove_unlimited_dims, copy_var_attributes
 
 DEFAULT_COMPRESSION_VAR_RE = r'^(.*averaging_kernel)|(.+_covariance)$'
 
@@ -64,6 +64,9 @@ def compress_file(input_filename, output_filename, max_error, progress_bar=False
     
     # Remove the compression variable from the destination file
     remove_netcdf_variables(input_filename, output_filename, vars_to_compress)
+
+    # Remove unlimited dimensions to improve traditional compression
+    remove_unlimited_dims(output_filename, output_filename, overwrite=True)
 
     # Open output for copying compression output
     data_file_output = netCDF4.Dataset(output_filename, 'a')
