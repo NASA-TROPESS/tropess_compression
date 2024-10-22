@@ -10,6 +10,8 @@ from tropess_compression.netcdf_util import remove_netcdf_variables, remove_unli
 
 DEFAULT_COMPRESSION_VAR_RE = r'^(.*averaging_kernel)|(.+_covariance)$'
 
+DEFAULT_MAX_ERROR = 0.00005 
+
 logger = logging.getLogger()
 
 def compress_variable(data_file_input, data_file_output, var_name, max_error, progress_bar=False):
@@ -88,8 +90,8 @@ def main():
     parser.add_argument('output_filename', type=str,
                         help='File name for the compressed output TROPESS product file')
 
-    parser.add_argument('--max_error', type=float, default=0.00005,
-                        help='Maximum tolerated error for entries of compressed objects.')
+    parser.add_argument('--max_error', type=float, default=DEFAULT_MAX_ERROR,
+                        help=f'Maximum tolerated error for entries of compressed objects. Default value: {DEFAULT_MAX_ERROR}')
 
     parser.add_argument('--verbose', '-v', action='store_true',
                         help='Enable additional debug logging to screen')
