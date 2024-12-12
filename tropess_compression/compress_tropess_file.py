@@ -14,7 +14,7 @@ DEFAULT_MAX_ERROR = 0.00005
 
 logger = logging.getLogger()
 
-def compress_variable(data_file_input, data_file_output, var_name, max_error, progress_bar=False):
+def compress_variable(data_file_input, data_file_output, var_name, max_error=DEFAULT_MAX_ERROR, progress_bar=False):
 
     # Read input data
     fill_value = data_file_input[var_name]._FillValue
@@ -55,7 +55,7 @@ def compression_variable_list(data_file_input):
 
     return list(find_compression_vars(data_file_input))
 
-def compress_file(input_filename, output_filename, max_error, progress_bar=False):
+def compress_file(input_filename, output_filename, max_error=DEFAULT_MAX_ERROR, progress_bar=False):
 
     # Open input file, find which variables will be compressed    
     data_file_input = netCDF4.Dataset(input_filename, 'r')
@@ -101,7 +101,7 @@ def main():
     if args.verbose:
         logging.basicConfig(level=logging.DEBUG, force=True)
 
-    compress_file(args.input_filename, args.output_filename, args.max_error, progress_bar=args.verbose)
+    compress_file(args.input_filename, args.output_filename, max_error=args.max_error, progress_bar=args.verbose)
 
 if __name__ == '__main__':
     main()
