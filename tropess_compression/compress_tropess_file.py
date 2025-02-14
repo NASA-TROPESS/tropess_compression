@@ -12,6 +12,12 @@ DEFAULT_COMPRESSION_VAR_RE = r'^(.*averaging_kernel)|(.+_covariance)$'
 
 DEFAULT_MAX_ERROR = 0.00005 
 
+# Support pre and post netCDF v1.6.0 compression kwarg formatting
+compression_kwarg = {'compression': 'zlib'}
+ver_parts = list(map(int, netCDF4.__version__.split('.')))
+if ver_parts[0] == 1 and ver_parts[1] < 6:
+    compression_kwarg = {'zlib': True}
+
 logger = logging.getLogger()
 
 def compress_variable(data_file_input, data_file_output, var_name, max_error=DEFAULT_MAX_ERROR, progress_bar=False):
@@ -28,7 +34,7 @@ def compress_variable(data_file_input, data_file_output, var_name, max_error=DEF
     # to have been removed from the output data file
     dim_name = data_file_input[var_name].name + "_compressed_bytes"
     out_dim = data_file_output.createDimension(dim_name, len(compressed_data))
-    out_var = data_file_output.createVariable(var_name, np.byte, (dim_name,), fill_value=fill_value, compression='zlib')
+    out_var = data_file_output.createVariable(var_name, np.byte, (dim_name,), fill_value=fill_value, **compression_kwarg)
     out_var[...] = compressed_data
 
     # Copy attributes from source variable, except for certain ignored ones
