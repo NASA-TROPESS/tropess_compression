@@ -11,6 +11,12 @@ COMPRESS_DIMENSIONS_RE = r'.*_compressed_bytes'
 
 logger = logging.getLogger()
 
+# Support pre and post netCDF v1.6.0 compression kwarg formatting
+compression_kwarg = {'compression': 'zlib'}
+ver_parts = list(map(int, netCDF4.__version__.split('.')))
+if ver_parts[0] == 1 and ver_parts[1] < 6:
+    compression_kwarg = {'zlib': True}
+
 def decompress_variable(data_file_input, data_file_output, var_name, progress_bar=False):
 
     # Read input data
@@ -27,7 +33,7 @@ def decompress_variable(data_file_input, data_file_output, var_name, progress_ba
     decompress_dtype = data_file_input[var_name].uncompressed_data_type
     decompress_fill_value = data_file_input[var_name].uncompressed_fill_value
 
-    out_var = data_file_output.createVariable(var_name, decompress_dtype, decompress_dims, fill_value=decompress_fill_value, compression='zlib')
+    out_var = data_file_output.createVariable(var_name, decompress_dtype, decompress_dims, fill_value=decompress_fill_value, **compression_kwarg)
     out_var[...] = decompressed_data
 
     # Copy attributes from source variable, except for certain ignored ones
