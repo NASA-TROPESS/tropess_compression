@@ -20,7 +20,11 @@ if ver_parts[0] == 1 and ver_parts[1] < 6:
 def decompress_variable(data_file_input, data_file_output, var_name, progress_bar=False):
 
     # Read input data
-    fill_value = data_file_input[var_name]._FillValue
+    # Gracefully (maybe?) handle variables that are missing _FillValue. We should
+    # fully shift away from using missing_value in the future. We should also use
+    # an up-to-date version of netCDF4 so we could use variable.get_fill_value()
+    # instead of this ... thing.
+    fill_value = data_file_input[var_name]._FillValue = data_file_input[var_name]._FillValue if hasattr(data_file_input[var_name], '_FillValue') else data_file_input[var_name].missing_value
     compressed_input = data_file_input[var_name][...].filled(fill_value)
 
     # Perform decompression
