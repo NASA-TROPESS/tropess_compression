@@ -52,7 +52,7 @@ def compression_variable_list(data_file_input):
 
     def find_compression_vars(root):
         for var_obj in root.variables.values():
-            if re.match(DEFAULT_COMPRESSION_VAR_RE, var_obj.name):
+            if re.match(DEFAULT_COMPRESSION_VAR_RE, var_obj.name) and len(var_obj.shape) == 3:
                 v_name = var_obj.group().path + "/" + var_obj.name
                 yield v_name.lstrip('/')
         for grp_obj in root.groups.values():
