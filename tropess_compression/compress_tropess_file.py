@@ -27,7 +27,7 @@ def compress_variable(data_file_input, data_file_output, var_name, max_error=DEF
     # fully shift away from using missing_value in the future. We should also use
     # an up-to-date version of netCDF4 so we could use variable.get_fill_value()
     # instead of this ... thing.
-    fill_value = data_file_input[var_name]._FillValue = data_file_input[var_name]._FillValue if hasattr(data_file_input[var_name], '_FillValue') else data_file_input[var_name].missing_value
+    fill_value = data_file_input[var_name]._FillValue if hasattr(data_file_input[var_name], '_FillValue') else data_file_input[var_name].missing_value
     data_input = data_file_input[var_name][...].filled(fill_value)
 
     # Perform compression
