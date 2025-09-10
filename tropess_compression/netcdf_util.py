@@ -50,8 +50,22 @@ def remove_unlimited_dims(input_filename, output_filename, **kwargs):
 def copy_var_attributes(source_var, dest_var, ignore_pattern=IGNORE_ATTRS_PATTERN):
 
     # Copy attributes from source variable, except for certain ignored ones
-    for attr_name in source_var.ncattrs():
-        if re.search(ignore_pattern, attr_name):
+    for src_attr_name in source_var.ncattrs():
+        if re.search(ignore_pattern, src_attr_name):
             continue
 
-        setattr(dest_var, attr_name, getattr(source_var, attr_name))
+        # Since missing_value has a special, warnings occur when trying to cast from
+        # the source uncompressed array into the destination compressed array.
+        # Example warning:
+        # UserWarning: WARNING: missing_value cannot be safely cast to variable dtype
+        #
+        # So instead rename attribute name back and forth when compressing and uncompressing
+        # to reflect that the missing value is from the source variable
+        if src_attr_name == "missing_value":
+            dst_attr_name = "source_missing_value"
+        elif src_attr_name == "source_missing_value":
+            dst_attr_name = "missing_value"
+        else:
+            dst_attr_name = src_attr_name
+
+        setattr(dest_var, dst_attr_name, getattr(source_var, src_attr_name))
