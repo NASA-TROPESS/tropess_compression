@@ -457,7 +457,9 @@ class Multiple_Sounding_Compression:
                 for j in range(orig_dim):
                     vv_temp[:] = self.data_array[:, i, j]
                     ind_valid = np.where(vv_temp != fill_value)
-                    data_array_median[ind_valid[0],i,j] = np.median(vv_temp[ind_valid])
+                    # Avoid warning on taking the mean of an empty slice 
+                    if len(ind_valid[0]) > 0:
+                        data_array_median[ind_valid[0],i,j] = np.median(vv_temp[ind_valid])
             
             data_array_minus_median_nofill = data_array_nofill - data_array_median
             data_array_minus_med_sq_nmlzd =  np.square(data_array_minus_median_nofill)
