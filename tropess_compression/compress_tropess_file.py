@@ -23,12 +23,14 @@ logger = logging.getLogger()
 def compress_variable(data_file_input, data_file_output, var_name, max_error=DEFAULT_MAX_ERROR, progress_bar=False):
 
     # Read input data
+    input_var = data_file_input[var_name]
+
     # Gracefully (maybe?) handle variables that are missing _FillValue. We should
     # fully shift away from using missing_value in the future. We should also use
     # an up-to-date version of netCDF4 so we could use variable.get_fill_value()
     # instead of this ... thing.
-    fill_value = data_file_input[var_name]._FillValue if hasattr(data_file_input[var_name], '_FillValue') else data_file_input[var_name].missing_value
-    data_input = data_file_input[var_name][...].filled(fill_value)
+    fill_value = input_var._FillValue if hasattr(input_var, '_FillValue') else input_var.missing_value
+    data_input = input_var[...].filled(fill_value)
 
     # Perform compression
     compressor = Multiple_Sounding_Compression(data_input, fill_value=fill_value, progress_bar=progress_bar)
@@ -36,27 +38,37 @@ def compress_variable(data_file_input, data_file_output, var_name, max_error=DEF
 
     # Create new variable with same name as original, requires this variable
     # to have been removed from the output data file
-    dim_name = data_file_input[var_name].name + "_compressed_bytes"
+
+    # Add a prefix with the group name to the dimension name to avoid name classes
+    # with variables named the same in different groups
+    group_name_concat = input_var.group().path.strip("/").replace("/", "_")
+    if len(group_name_concat) > 0:
+        group_prefix = group_name_concat + "_"
+    else:
+        group_prefix = ""
+
+    dim_name = group_prefix + input_var.name + "_compressed_bytes"
     out_dim = data_file_output.createDimension(dim_name, len(compressed_data))
     out_var = data_file_output.createVariable(var_name, np.byte, (dim_name,), fill_value=fill_value, **compression_kwarg)
     out_var[...] = compressed_data
 
     # Copy attributes from source variable, except for certain ignored ones
-    copy_var_attributes(data_file_input[var_name], out_var)
+    copy_var_attributes(input_var, out_var)
 
     # Annotate as a compressed variable
     out_var.compression_comment = 'This value cannot be read directly. Use decompress_tropess_file: https://github.com/NASA-TROPESS/tropess_compression'
     out_var.compression_max_error = max_error
-    out_var.uncompressed_dimensions = [ dim_name for dim_name in data_file_input[var_name].dimensions ]
-    out_var.uncompressed_data_type = str(data_file_input[var_name].dtype)
+    out_var.uncompressed_dimensions = [ dim_name for dim_name in input_var.dimensions ]
+    out_var.uncompressed_data_type = str(input_var.dtype)
     out_var.uncompressed_fill_value = fill_value
 
-def compression_variable_list(data_file_input):
+def compression_variable_list(data_file_input, compression_dimension):
     "Find variable names that match a certain regular expression"
 
     def find_compression_vars(root):
         for var_obj in root.variables.values():
-            if re.match(DEFAULT_COMPRESSION_VAR_RE, var_obj.name) and len(var_obj.shape) == 3:
+            if re.match(DEFAULT_COMPRESSION_VAR_RE, var_obj.name) and len(var_obj.shape) == 3 and \
+                (compression_dimension is None or compression_dimension in var_obj.dimensions):
                 v_name = var_obj.group().path + "/" + var_obj.name
                 yield v_name.lstrip('/')
         for grp_obj in root.groups.values():
@@ -65,11 +77,11 @@ def compression_variable_list(data_file_input):
 
     return list(find_compression_vars(data_file_input))
 
-def compress_file(input_filename, output_filename, max_error=DEFAULT_MAX_ERROR, progress_bar=False):
+def compress_file(input_filename, output_filename, max_error=DEFAULT_MAX_ERROR, progress_bar=False, compression_dimension="level_fm"):
 
     # Open input file, find which variables will be compressed    
     data_file_input = netCDF4.Dataset(input_filename, 'r')
-    vars_to_compress = compression_variable_list(data_file_input)
+    vars_to_compress = compression_variable_list(data_file_input, compression_dimension)
 
     # Start with a copy of the original since some contents will not be compressed
     logger.debug(f"Creating modified destination file: {output_filename} from {input_filename}")
