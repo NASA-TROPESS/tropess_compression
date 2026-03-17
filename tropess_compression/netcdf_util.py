@@ -37,7 +37,7 @@ def remove_netcdf_variables(input_filename, output_filename, var_removal_list, *
 
     var_list_str = ",".join(var_removal_list)
     
-    ncks_options=["-x", f"-v {var_list_str}"]
+    ncks_options=["-4", "-L 4", "-x", "-v", var_list_str, "--fix_rec_dmn", "all"] 
 
     return call_ncks(input_filename, output_filename, options=ncks_options, **kwargs)
 
