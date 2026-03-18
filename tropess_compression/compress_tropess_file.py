@@ -10,6 +10,7 @@ from .netcdf_util import remove_netcdf_variables, remove_unlimited_dims, copy_va
 from .timing import RuntimeLogging
 
 DEFAULT_COMPRESSION_VAR_RE = r'^(.*averaging_kernel)|(.+_covariance)$'
+SYMMETRIC_COMPRESSION_VAR_RE = r'(.+_covariance)$'
 
 DEFAULT_MAX_ERROR = 0.00005 
 
@@ -21,9 +22,14 @@ if ver_parts[0] == 1 and ver_parts[1] < 6:
 
 logger = logging.getLogger()
 
-def compress_variable(data_file_input, data_file_output, var_name, max_error=DEFAULT_MAX_ERROR):
+def compress_variable(data_file_input, data_file_output, var_name, max_error=DEFAULT_MAX_ERROR, is_symmetric=False):
         
-    logger.debug(f"Processing: {var_name}")
+    if is_symmetric:
+        compression_type_str = "symmetric"
+    else:
+        compression_type_str = "asymmetric"
+
+    logger.debug(f"Processing {compression_type_str} matrix: {var_name}")
 
     # Read input data
     input_var = data_file_input[var_name]
@@ -37,12 +43,13 @@ def compress_variable(data_file_input, data_file_output, var_name, max_error=DEF
     # Leaving as a masked array, do not copy the data here. This will be copied by the class instance.
     # Copying here slows down the processing.
     data_input = input_var 
-    
-    # Perform compression
-    compressor = Multiple_Sounding_Compression(data_input, fill_value=fill_value)
-    
+   
     with RuntimeLogging(f"{var_name} compression", logger, logging.DEBUG):
-        if re.match(DEFAULT_COMPRESSION_VAR_RE, var_name): 
+        # Perform compression
+        compressor = Multiple_Sounding_Compression(data_input, fill_value=fill_value)
+
+        # Compress symmetric matrices with “compression_mode=2” and asymmetric matrices with “compression_mode=1"
+        if is_symmetric:
             compressed_data = compressor.compress_3D(max_error=max_error, compression_mode=2)
         else:
             compressed_data = compressor.compress_3D(max_error=max_error, compression_mode=1)
@@ -64,16 +71,16 @@ def compress_variable(data_file_input, data_file_output, var_name, max_error=DEF
         out_var = data_file_output.createVariable(var_name, np.byte, (dim_name,), fill_value=fill_value, **compression_kwarg)
         out_var[...] = compressed_data
 
-    # Copy attributes from source variable, except for certain ignored ones
-    copy_var_attributes(input_var, out_var)
+        # Copy attributes from source variable, except for certain ignored ones
+        copy_var_attributes(input_var, out_var)
 
-    # Annotate as a compressed variable
-    out_var.compression_comment = 'This value cannot be read directly. Use decompress_tropess_file: https://github.com/NASA-TROPESS/tropess_compression'
-    out_var.compression_max_error = max_error
-    out_var.uncompressed_dimensions = [ dim_name for dim_name in input_var.dimensions ]
-    out_var.uncompressed_data_type = str(input_var.dtype)
-    out_var.uncompressed_fill_value = fill_value
-    out_var.uncompressed_chunking = input_var.chunking() 
+        # Annotate as a compressed variable
+        out_var.compression_comment = 'This value cannot be read directly. Use decompress_tropess_file: https://github.com/NASA-TROPESS/tropess_compression'
+        out_var.compression_max_error = max_error
+        out_var.uncompressed_dimensions = [ dim_name for dim_name in input_var.dimensions ]
+        out_var.uncompressed_data_type = str(input_var.dtype)
+        out_var.uncompressed_fill_value = fill_value
+        out_var.uncompressed_chunking = input_var.chunking() 
 
 def compression_variable_list(data_file_input, compression_dimension):
     "Find variable names that match a certain regular expression"
@@ -108,7 +115,8 @@ def compress_file(input_filename, output_filename, max_error=DEFAULT_MAX_ERROR, 
 
     # Compress variables
     for var_name in vars_to_compress:
-        compress_variable(data_file_input, data_file_output, var_name, max_error)
+        is_symmetric = re.match(SYMMETRIC_COMPRESSION_VAR_RE, var_name) 
+        compress_variable(data_file_input, data_file_output, var_name, max_error, is_symmetric=is_symmetric)
         
     data_file_input.close()
     data_file_output.close()
