@@ -15,10 +15,14 @@ maintainers = [
 description='TROPESS Averaging Kernel and Covariance Compression Tool'
 requires-python = ">=3.8"
 version = "1.3.0"
-dynamic = ["dependencies"]
 
-[tool.setuptools.dynamic]
-dependencies = {file = ["requirements.txt"]}
+dependencies = [
+  "numpy",
+  "netcdf4",
+  "nco",
+  "threadpoolctl",
+  "bitarray",
+]
 
 [project.scripts]
 compress_tropess_file = "tropess_compression.compress_tropess_file:main"
