@@ -1,5 +1,5 @@
-numpy
-netCDF4
-bitarray
-nco
-threadpoolctl
+numpy>=2.1.2
+netcdf4>=1.7.1
+nco>=1.1.2
+threadpoolctl>=3.6.0
+bitarray>=3.0.0

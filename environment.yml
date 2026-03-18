@@ -1,0 +1,12 @@
+name: tropess-compression
+channels:
+- conda-forge
+dependencies:
+- python>=3.12
+- numpy>=2.1.2
+- netcdf4>=1.7.1
+- nco>=5.2.8
+- threadpoolctl>=3.6.0
+- pip:
+  - bitarray>=3.0.0
+  - nco>=1.1.2
