@@ -771,10 +771,10 @@ class Multiple_Sounding_Compression:
                     num_r_mat_byte_list.append(num_r_mat_bytes)
             
             
-            T_left_row_sets_bitarray = bitarray([i == 1 for i in T_left_row_sets.flatten()], endian='big')
+            T_left_row_sets_bitarray = bitarray(list(T_left_row_sets.astype(int).flatten()), endian='big')
             T_left_row_sets_byte_list = [T_left_row_sets_bitarray.tobytes()]
             
-            T_right_col_sets_bitarray = bitarray([i == 1 for i in T_right_col_sets.flatten()], endian='big')
+            T_right_col_sets_bitarray = bitarray(list(T_right_col_sets.astype(int).flatten()), endian='big')
             T_right_col_sets_byte_list = [T_right_col_sets_bitarray.tobytes()] 
             
             compressed_byte_list += T_left_byte_list
