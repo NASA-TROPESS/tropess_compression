@@ -5,15 +5,11 @@ import logging
 import netCDF4
 import numpy as np
 
-# from tropess_compression.akc_compression import Multiple_Sounding_Compression
-# from tropess_compression.netcdf_util import remove_netcdf_variables, remove_unlimited_dims, copy_var_attributes
-
-from akc_compression import Multiple_Sounding_Compression
-from netcdf_util import remove_netcdf_variables, remove_unlimited_dims, copy_var_attributes
+from .akc_compression import Multiple_Sounding_Compression
+from .netcdf_util import remove_netcdf_variables, remove_unlimited_dims, copy_var_attributes
+from .timing import RuntimeLogging
 
 DEFAULT_COMPRESSION_VAR_RE = r'^(.*averaging_kernel)|(.+_covariance)$'
-DEFAULT_COMPRESSION_VAR_RE_AK = r'^(.*averaging_kernel)' #Did they mean to have a `$' at the end? 
-DEFAULT_COMPRESSION_VAR_RE_COV = r'(.+_covariance)$'
 
 DEFAULT_MAX_ERROR = 0.00005 
 
@@ -25,7 +21,9 @@ if ver_parts[0] == 1 and ver_parts[1] < 6:
 
 logger = logging.getLogger()
 
-def compress_variable(data_file_input, data_file_output, var_name, max_error=DEFAULT_MAX_ERROR, progress_bar=False):
+def compress_variable(data_file_input, data_file_output, var_name, max_error=DEFAULT_MAX_ERROR):
+        
+    logger.debug(f"Processing: {var_name}")
 
     # Read input data
     input_var = data_file_input[var_name]
@@ -35,15 +33,19 @@ def compress_variable(data_file_input, data_file_output, var_name, max_error=DEF
     # an up-to-date version of netCDF4 so we could use variable.get_fill_value()
     # instead of this ... thing.
     fill_value = input_var._FillValue if hasattr(input_var, '_FillValue') else input_var.missing_value
-    data_input = input_var #Leaving as a masked array ends up being faster with new changes. This will be copied by the class instance. 
+    
+    # Leaving as a masked array, do not copy the data here. This will be copied by the class instance.
+    # Copying here slows down the processing.
+    data_input = input_var 
     
     # Perform compression
-    compressor = Multiple_Sounding_Compression(data_input, fill_value=fill_value, progress_bar=progress_bar)
+    compressor = Multiple_Sounding_Compression(data_input, fill_value=fill_value)
     
-    if re.match(DEFAULT_COMPRESSION_VAR_RE_COV, var_name): 
-        compressed_data = compressor.compress_3D(max_error=max_error, compression_mode=2)
-    else:
-        compressed_data = compressor.compress_3D(max_error=max_error, compression_mode=1)
+    with RuntimeLogging(f"{var_name} compression", logger, logging.DEBUG):
+        if re.match(DEFAULT_COMPRESSION_VAR_RE, var_name): 
+            compressed_data = compressor.compress_3D(max_error=max_error, compression_mode=2)
+        else:
+            compressed_data = compressor.compress_3D(max_error=max_error, compression_mode=1)
     
     # Create new variable with same name as original, requires this variable
     # to have been removed from the output data file
@@ -56,10 +58,11 @@ def compress_variable(data_file_input, data_file_output, var_name, max_error=DEF
     else:
         group_prefix = ""
 
-    dim_name = group_prefix + input_var.name + "_compressed_bytes"
-    out_dim = data_file_output.createDimension(dim_name, len(compressed_data))
-    out_var = data_file_output.createVariable(var_name, np.byte, (dim_name,), fill_value=fill_value, **compression_kwarg)
-    out_var[...] = compressed_data
+    with RuntimeLogging(f"{var_name} writing", logger, logging.DEBUG):
+        dim_name = group_prefix + input_var.name + "_compressed_bytes"
+        out_dim = data_file_output.createDimension(dim_name, len(compressed_data))
+        out_var = data_file_output.createVariable(var_name, np.byte, (dim_name,), fill_value=fill_value, **compression_kwarg)
+        out_var[...] = compressed_data
 
     # Copy attributes from source variable, except for certain ignored ones
     copy_var_attributes(input_var, out_var)
@@ -87,7 +90,7 @@ def compression_variable_list(data_file_input, compression_dimension):
 
     return list(find_compression_vars(data_file_input))
 
-def compress_file(input_filename, output_filename, max_error=DEFAULT_MAX_ERROR, progress_bar=False, compression_dimension="level_fm"):
+def compress_file(input_filename, output_filename, max_error=DEFAULT_MAX_ERROR, compression_dimension="level_fm"):
 
     # Open input file, find which variables will be compressed    
     data_file_input = netCDF4.Dataset(input_filename, 'r')
@@ -105,8 +108,7 @@ def compress_file(input_filename, output_filename, max_error=DEFAULT_MAX_ERROR, 
 
     # Compress variables
     for var_name in vars_to_compress:
-        logger.debug(f"Compressing: {var_name}")
-        compress_variable(data_file_input, data_file_output, var_name, max_error, progress_bar=progress_bar)
+        compress_variable(data_file_input, data_file_output, var_name, max_error)
         
     data_file_input.close()
     data_file_output.close()
@@ -114,10 +116,10 @@ def compress_file(input_filename, output_filename, max_error=DEFAULT_MAX_ERROR, 
 def main():
     parser = argparse.ArgumentParser()
     
-    parser.add_argument('--input_filename', type=str,
+    parser.add_argument('input_filename', type=str,
                         help='File name of input TROPESS product to compress')
 
-    parser.add_argument('--output_filename', type=str,
+    parser.add_argument('output_filename', type=str,
                         help='File name for the compressed output TROPESS product file')
 
     parser.add_argument('--max_error', type=float, default=DEFAULT_MAX_ERROR,
@@ -131,7 +133,7 @@ def main():
     if args.verbose:
         logging.basicConfig(level=logging.DEBUG, force=True)
 
-    compress_file(args.input_filename, args.output_filename, max_error=args.max_error, progress_bar=args.verbose)
+    compress_file(args.input_filename, args.output_filename, max_error=args.max_error)
     
 
 if __name__ == '__main__':

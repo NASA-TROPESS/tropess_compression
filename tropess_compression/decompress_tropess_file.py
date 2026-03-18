@@ -4,11 +4,9 @@ import logging
 
 import netCDF4
 
-# from tropess_compression.akc_compression import Multiple_Sounding_Decompression 
-# from tropess_compression.netcdf_util import remove_netcdf_variables, copy_var_attributes
-
-from akc_compression import Multiple_Sounding_Decompression 
-from netcdf_util import remove_netcdf_variables, copy_var_attributes
+from .akc_compression import Multiple_Sounding_Decompression 
+from .netcdf_util import remove_netcdf_variables, copy_var_attributes
+from .timing import RuntimeLogging
 
 COMPRESS_DIMENSIONS_RE = r'.*_compressed_bytes'
 
@@ -20,7 +18,9 @@ ver_parts = list(map(int, netCDF4.__version__.split('.')))
 if ver_parts[0] == 1 and ver_parts[1] < 6:
     compression_kwarg = {'zlib': True}
 
-def decompress_variable(data_file_input, data_file_output, var_name, progress_bar=False):
+def decompress_variable(data_file_input, data_file_output, var_name):
+        
+    logger.debug(f"Processing: {var_name}")
 
     # Read input data
     # Gracefully (maybe?) handle variables that are missing _FillValue. We should
@@ -31,8 +31,9 @@ def decompress_variable(data_file_input, data_file_output, var_name, progress_ba
     compressed_input = data_file_input[var_name][:]
 
     # Perform decompression
-    decompressor = Multiple_Sounding_Decompression(compressed_input, progress_bar=progress_bar)
-    decompressed_data = decompressor.decompress_3D()
+    with RuntimeLogging(f"{var_name} decompression", logger, logging.DEBUG):
+        decompressor = Multiple_Sounding_Decompression(compressed_input)
+        decompressed_data = decompressor.decompress_3D()
 
     # Create new variable with same name as original, requires this variable
     # to have been removed from the output data file
@@ -41,8 +42,9 @@ def decompress_variable(data_file_input, data_file_output, var_name, progress_ba
     decompress_fill_value = data_file_input[var_name].uncompressed_fill_value
     decompress_chunking = data_file_input[var_name].uncompressed_chunking
     
-    out_var = data_file_output.createVariable(var_name, decompress_dtype, decompress_dims, fill_value=decompress_fill_value, chunksizes=decompress_chunking, **compression_kwarg)
-    out_var[...] = decompressed_data
+    with RuntimeLogging(f"{var_name} writing", logger, logging.DEBUG):
+        out_var = data_file_output.createVariable(var_name, decompress_dtype, decompress_dims, fill_value=decompress_fill_value, chunksizes=decompress_chunking, **compression_kwarg)
+        out_var[...] = decompressed_data
     
     # Copy attributes from source variable, except for certain ignored ones
     copy_var_attributes(data_file_input[var_name], out_var)
@@ -63,7 +65,7 @@ def decompression_variable_list(data_file_input):
 
     return list(find_decompression_vars(data_file_input))
 
-def decompress_file(input_filename, output_filename, progress_bar=False):
+def decompress_file(input_filename, output_filename):
 
     # Open input file, find which variables will be decompressed    
     data_file_input = netCDF4.Dataset(input_filename, 'r')
@@ -81,8 +83,7 @@ def decompress_file(input_filename, output_filename, progress_bar=False):
 
     # Compress variables
     for var_name in vars_to_decompress:
-        logger.debug(f"Decompressing: {var_name}")
-        decompress_variable(data_file_input, data_file_output, var_name, progress_bar=progress_bar)
+        decompress_variable(data_file_input, data_file_output, var_name)
         
     data_file_input.close()
     data_file_output.close()
@@ -90,10 +91,10 @@ def decompress_file(input_filename, output_filename, progress_bar=False):
 def main():
     parser = argparse.ArgumentParser()
     
-    parser.add_argument('--input_filename', type=str,
+    parser.add_argument('input_filename', type=str,
                         help='File name of input TROPESS product to decompress')
 
-    parser.add_argument('--output_filename', type=str,
+    parser.add_argument('output_filename', type=str,
                         help='File name for the decompressed output TROPESS product file')
 
     parser.add_argument('--verbose', '-v', action='store_true',
@@ -104,7 +105,7 @@ def main():
     if args.verbose:
         logging.basicConfig(level=logging.DEBUG, force=True)
 
-    decompress_file(args.input_filename, args.output_filename, progress_bar=args.verbose)
+    decompress_file(args.input_filename, args.output_filename)
     
 
 if __name__ == '__main__':

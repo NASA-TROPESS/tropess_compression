@@ -7,7 +7,6 @@ Copyright 2024, by the California Institute of Technology. ALL RIGHTS RESERVED. 
 import numpy as np
 import struct 
 from timeit import default_timer as timer
-from tqdm import tqdm
 from bitarray import bitarray
 from time import time 
 
@@ -246,7 +245,7 @@ class Multiple_Sounding_Transformation:
     
 class Multiple_Sounding_Compression:
     
-    def __init__(self, data_array=None, fill_value=-999.0, progress_bar=False, copy_data=True):
+    def __init__(self, data_array=None, fill_value=-999.0, copy_data=True):
         """
         Takes in multiple data matrices as a 3D numpy array where first dimension is 
         the sounding index and second two dimensions are the sounding's number of 
@@ -269,7 +268,6 @@ class Multiple_Sounding_Compression:
         self.fill_value = fill_value
         self.num_soundings = data_array.shape[0]
         self.orig_dim = data_array.shape[-1]
-        self.progress_bar = progress_bar
     
     
     def compute_support_indices_2D(self, arr_2D):
@@ -952,14 +950,13 @@ class Multiple_Sounding_Compression:
         
 class Multiple_Sounding_Decompression:
 
-    def __init__(self, compressed_data_bytes=None, progress_bar=False):
+    def __init__(self, compressed_data_bytes=None):
         """
         Take in the compressed_data_bytes returned by compress_3D function 
         from the Multiple_Sounding_Compression class. 
         """
 
         self.compressed_data_bytes = compressed_data_bytes 
-        self.progress_bar = progress_bar
     
     @staticmethod 
     def invert_transformation_static(arr_2D, T_left_inv_list, T_right_inv_list, orig_dim=67):
