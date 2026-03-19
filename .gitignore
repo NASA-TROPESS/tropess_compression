@@ -29,4 +29,6 @@ env/
 
 # Development files
 .env
-.vscode/
+.vscode/# pixi environments
+.pixi/*
+!.pixi/config.toml
