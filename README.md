@@ -1,6 +1,4 @@
-# tropess_compression
-
-TROPESS Averaging Kernel and Covariance Compression and Decompression Tool.
+# TROPESS Averaging Kernel and Covariance Compression and Decompression Tool.
 
 This tool can be used to decompress large (3D) data structures in TROPESS L2 full product files.
 
@@ -106,7 +104,7 @@ decompress_tropess_file compressed_input.nc decompressed_output.nc --verbose
 
 ## Additional Documentation
 
-The algorithm is documented in the [Compression of Averaging Kernels and Covariance Matrices in TROPESS L2 Ozone Archival Data Products](documentation/MUSES_compression.pdf) writeup.
+The algorithm is documented in the [Compression of Averaging Kernels and Covariance Matrices in TROPESS L2 Ozone Archival Data Products](documentation/tropess_compression.pdf) writeup.
 
 For an example of using the software package directly to decompress individual netCDF variables, see the [example decompression Jupyter notebook](documentation/example_decompression.ipynb). 
 
