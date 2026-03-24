@@ -7,8 +7,28 @@ Copyright 2024, by the California Institute of Technology. ALL RIGHTS RESERVED. 
 import numpy as np
 import struct 
 from timeit import default_timer as timer
-from tqdm import tqdm
 from bitarray import bitarray
+from time import time 
+
+import multiprocessing as mp 
+from multiprocessing import shared_memory
+from multiprocessing.pool import ThreadPool
+from multiprocessing import Manager 
+
+from itertools import product
+
+from copy import deepcopy 
+
+import os
+
+from threadpoolctl import threadpool_limits
+
+#For parallelizing tasks 
+def get_chunksize(total_items):
+    num_cores = os.cpu_count() or 1
+    # Aim for 4 chunks per core to balance load and overhead
+    tasks_per_core = 4
+    return max(1, total_items // (num_cores * tasks_per_core))
 
 class Multiple_Sounding_Transformation:
     
@@ -40,10 +60,12 @@ class Multiple_Sounding_Transformation:
         num_soundings = int(self.num_soundings)
         orig_dim = int(self.orig_dim)
         supp_inds_mat = np.zeros((num_soundings, orig_dim,), dtype=int)
-        for i_sounding in range(num_soundings):
-            #Must take the union of the support indices of each row: 
-            for i_row in range(orig_dim):
-                supp_inds_mat[i_sounding, np.where(self.data_array[i_sounding, i_row, :] != self.fill_value)[0]] = 1
+        if np.ma.isMaskedArray(self.data_array):
+            supp_inds_mat[:] = np.any(~self.data_array.mask, axis=-1)
+        else:
+            filled_entries_mat = self.data_array == self.fill_value
+            supp_inds_mat[:] = np.any(~filled_entries_mat, axis=-1)
+        
         num_supp_inds = np.sum(supp_inds_mat, axis=1)
         
         self.supp_inds_mat = supp_inds_mat
@@ -55,8 +77,11 @@ class Multiple_Sounding_Transformation:
         Replace data array fill values with zero. 
         """
         data_array_filled = np.zeros(self.data_array.shape)
-        data_array_filled[:, :, :] = self.data_array[:, :, :]
-        data_array_filled[np.where(self.data_array == self.fill_value)] = 0
+        if np.ma.isMaskedArray(self.data_array):
+            data_array_filled[:, :, :] = self.data_array.filled(0)[:, :, :]
+        else:
+            data_array_filled[:, :, :] = self.data_array[:, :, :]
+            data_array_filled[np.where(self.data_array == self.fill_value)] = 0
         
         self.data_array_filled = data_array_filled
         
@@ -89,15 +114,23 @@ class Multiple_Sounding_Transformation:
                 self.fill_with_zero()
             num_soundings = int(self.num_soundings)
             data_array_filled = self.data_array_filled
-            dat_concat_tall = np.concatenate([data_array_filled[i, :, :] for i in range(num_soundings)], axis=0)
-            dat_concat_long = np.concatenate([data_array_filled[i, :, :] for i in range(num_soundings)], axis=1)
+            
+            dat_MTM = np.zeros((data_array_filled.shape[1], data_array_filled.shape[2],))
+            dat_MMT = np.zeros((data_array_filled.shape[1], data_array_filled.shape[2],))
+            
+            for i_sounding in range(num_soundings):
+                #dat_MTM = dat_MTM + np.matmul(data_array_filled[i_sounding].transpose(), data_array_filled[i_sounding])
+                #dat_MMT = dat_MMT + np.matmul(data_array_filled[i_sounding], data_array_filled[i_sounding].transpose())
+                dat_MTM += np.matmul(data_array_filled[i_sounding].transpose(), data_array_filled[i_sounding])
+                dat_MMT += np.matmul(data_array_filled[i_sounding], data_array_filled[i_sounding].transpose())
 
-            U_tall, s_tall, Vh_tall = np.linalg.svd(dat_concat_tall, full_matrices=False)
-            U_long, s_long, Vh_long = np.linalg.svd(dat_concat_long, full_matrices=False)
-
-            T_left = U_long.transpose()
-            T_right = Vh_tall.transpose()
-
+            
+            U_MTM, s_MTM, Vh_MTM = np.linalg.svd(dat_MTM) #, full_matrices=False) #Tall 
+            U_MMT, s_MMT, Vh_MMT = np.linalg.svd(dat_MMT) #, full_matrices=False) #Long  
+            
+            T_left = U_MMT.transpose()
+            T_right = Vh_MTM.transpose()          
+            
             #Form a 0,1 matrix whose n^th row lists the row-indices of T_left which form an invertible submatrix
             #when restricted to columns n:-1. 
             T_left_row_sets = np.zeros((T_left.shape[1], T_left.shape[0],))
@@ -115,20 +148,17 @@ class Multiple_Sounding_Transformation:
                 self.fill_with_zero()
             num_soundings = int(self.num_soundings)
             data_array_filled = self.data_array_filled
+                          
+            dat_MMT = np.zeros((data_array_filled.shape[1], data_array_filled.shape[2],))
+            for i_sounding in range(num_soundings):
+                #dat_MMT = dat_MMT + np.matmul(data_array_filled[i_sounding], data_array_filled[i_sounding].transpose())
+                dat_MMT += np.matmul(data_array_filled[i_sounding], data_array_filled[i_sounding].transpose())
+                
+            U_MMT, s_MMT, Vh_MMT = np.linalg.svd(dat_MMT) #, full_matrices=False) #Long  
             
-            #Use this as baseline: 
-            dat_concat_long = np.concatenate([data_array_filled[i, :, :] for i in range(num_soundings)], axis=1)
-            U_long, s_long, Vh_long = np.linalg.svd(dat_concat_long, full_matrices=False)
-            T_left = U_long.transpose()
+            T_left = U_MMT.transpose()
             T_right = np.zeros(T_left.transpose().shape)
-            T_right[:, :] = T_left.transpose()[:, :]
-            
-            #dat_concat_tall = np.concatenate([data_array_filled[i, :, :] for i in range(num_soundings)], axis=0)
-            #U_tall, s_tall, Vh_tall = np.linalg.svd(dat_concat_tall, full_matrices=False)
-            #T_right = Vh_tall.transpose()
-            #T_left = np.zeros(T_right.transpose().shape)
-            #T_left[:, :] = T_right.transpose()[:, :] 
-            
+            T_right[:, :] = T_left.transpose()[:, :]           
             
             #Form a 0,1 matrix whose n^th row lists the row-indices of T_left which form an invertible submatrix
             #when restricted to columns n:-1. 
@@ -169,7 +199,9 @@ class Multiple_Sounding_Transformation:
         """
         Transform each individual matrix to prepare for compression. 
         """
+        
         self.construct_transformation_matrices() #Produces data_array_filled, T_left, and T_right 
+        
         data_array_filled = self.data_array_filled
         T_left = self.T_left
         T_right = self.T_right
@@ -184,7 +216,9 @@ class Multiple_Sounding_Transformation:
         num_soundings = int(self.num_soundings)
         supp_inds_mat = self.supp_inds_mat
         num_supp_inds = self.num_supp_inds
-        data_array_transformed = np.zeros(self.data_array.shape) + fill_value
+        
+        
+        data_array_transformed = np.zeros(self.data_array.shape) + fill_value 
         
         for i_sounding in range(num_soundings):
             ns = int(num_supp_inds[i_sounding])
@@ -202,7 +236,8 @@ class Multiple_Sounding_Transformation:
                     data_array_transformed[i_sounding, ind_datasuppinds[0], ind_datasuppinds[1]] = np.matmul( T_left[ind_Tleftrows, -ns:] , np.matmul( data_array_filled[i_sounding, -ns:, -ns:], T_right[-ns:, ind_Trightcols])).flatten()
                 else:
                     data_array_transformed[i_sounding, :, :] = np.matmul( T_left , np.matmul( data_array_filled[i_sounding, :, :], T_right))[:, :]
-                    
+        
+        
         return data_array_transformed, T_left, T_right, T_left_row_sets, T_right_col_sets, supp_inds_mat  
     
     
@@ -210,7 +245,7 @@ class Multiple_Sounding_Transformation:
     
 class Multiple_Sounding_Compression:
     
-    def __init__(self, data_array=None, fill_value=-999.0, progress_bar=False):
+    def __init__(self, data_array=None, fill_value=-999.0, copy_data=True):
         """
         Takes in multiple data matrices as a 3D numpy array where first dimension is 
         the sounding index and second two dimensions are the sounding's number of 
@@ -220,14 +255,19 @@ class Multiple_Sounding_Compression:
         #Ensure the data_array is 3-dimensional. 
         #Should put in some checks to make sure it is composed of square matrices. 
         if len(data_array.shape) == 2: 
-            self.data_array = np.array([data_array])
+            if copy_data:
+                self.data_array = np.array([data_array], copy=True)
+            else:
+                self.data_array = np.array([data_array]) #Operations may be performed in place --- could alter data_array 
         else: 
-            self.data_array = data_array 
+            if copy_data:
+                self.data_array = np.array(data_array, copy=True) 
+            else:
+                self.data_array = data_array #Operations may be performed in place --- could alter data_array 
         
         self.fill_value = fill_value
         self.num_soundings = data_array.shape[0]
         self.orig_dim = data_array.shape[-1]
-        self.progress_bar = progress_bar
     
     
     def compute_support_indices_2D(self, arr_2D):
@@ -238,7 +278,10 @@ class Multiple_Sounding_Compression:
         orig_dim = arr_2D.shape[0]
         supp_inds_vec = np.zeros((orig_dim,), dtype=int)
         for i_row in range(orig_dim):
-            supp_inds_vec[np.where(arr_2D[i_row, :] != self.fill_value)[0]] = 1
+            if np.ma.isMaskedArray(arr_2D):
+                supp_inds_vec[~arr_2D[i_row][:].mask] = 1 
+            else:
+                supp_inds_vec[np.where(arr_2D[i_row, :] != self.fill_value)[0]] = 1
         
         return supp_inds_vec 
         
@@ -286,7 +329,10 @@ class Multiple_Sounding_Compression:
         for i in range(orig_dim):
             for j in range(orig_dim):
                 arr = arr_3D[:, i, j]
-                ind_arr = np.where(arr != self.fill_value)
+                if np.ma.isMaskedArray(arr):
+                    ind_arr = np.where(~arr.mask)
+                else:
+                    ind_arr = np.where(arr != self.fill_value)
                 if len(ind_arr[0]) > 0:
                     arr_filtered = arr[ind_arr]
                     arr_mean = np.mean(arr_filtered) 
@@ -314,12 +360,15 @@ class Multiple_Sounding_Compression:
         Determine how many bits we need for an individual matrix. 
         """
         
-        ind_arr = np.where(arr_2D != self.fill_value)
+        if np.ma.isMaskedArray(arr_2D):
+            ind_arr = np.where(~arr_2D.mask)
+        else:
+            ind_arr = np.where(arr_2D != self.fill_value)
         arr_filtered = arr_2D[ind_arr]
         q_divisor_filtered = self.q_divisor_mat[ind_arr]
         num_r_filtered = self.num_r_mat[ind_arr]
         filtered_mean_filt = self.filtered_mean_mat[ind_arr]
-        
+
         arr_minus_mean_filt = arr_filtered - filtered_mean_filt
         
         num_arr_entries = arr_filtered.shape[0]
@@ -354,7 +403,10 @@ class Multiple_Sounding_Compression:
         
         num_bits_compressed = int(self.compute_number_compressed_bits_2D(arr_2D))
         
-        ind_arr = np.where(arr_2D != self.fill_value)
+        if np.ma.isMaskedArray(arr_2D):
+            ind_arr = np.where(~arr_2D.mask)
+        else:
+            ind_arr = np.where(arr_2D != self.fill_value)
         arr_filtered = arr_2D[ind_arr]
         q_divisor_filtered = self.q_divisor_mat[ind_arr]
         num_r_filtered = self.num_r_mat[ind_arr]
@@ -429,6 +481,161 @@ class Multiple_Sounding_Compression:
         arr_compressed_bytes = arr_compressed_01.tobytes()
         
         return(arr_compressed_bytes)
+    
+    
+    
+    @staticmethod 
+    def compute_support_indices_2D_static(arr_2D, fill_value=-999.0):
+        """
+        Compute the indices of the support rows/columns for a single (square) matrix. 
+        Assumes support columns are the same as support rows. 
+        """
+        orig_dim = arr_2D.shape[0]
+        supp_inds_vec = np.zeros((orig_dim,), dtype=int)
+        for i_row in range(orig_dim):
+            if np.ma.isMaskedArray(arr_2D):
+                supp_inds_vec[~arr_2D[i_row][:].mask] = 1 
+            else:
+                supp_inds_vec[np.where(arr_2D[i_row, :] != fill_value)[0]] = 1
+        
+        return supp_inds_vec 
+    
+    @staticmethod 
+    def compute_number_compressed_bits_2D_static(arr_2D, q_divisor_mat, num_r_mat, filtered_mean_mat, orig_dim=67, fill_value=-999.0):
+        """
+        Determine how many bits we need for an individual matrix. 
+        """
+        
+        if np.ma.isMaskedArray(arr_2D):
+            ind_arr = np.where(~arr_2D.mask)
+        else:
+            ind_arr = np.where(arr_2D != fill_value)
+        arr_filtered = arr_2D[ind_arr]
+        q_divisor_filtered = q_divisor_mat[ind_arr]
+        num_r_filtered = num_r_mat[ind_arr]
+        filtered_mean_filt = filtered_mean_mat[ind_arr]
+
+        arr_minus_mean_filt = arr_filtered - filtered_mean_filt
+        
+        num_arr_entries = arr_filtered.shape[0]
+        
+        #Start with bits for support indices: 
+        num_bits_supp_inds = orig_dim
+        
+        #Include a bit for the sign (+/-1): 
+        num_bits_sign_total = num_arr_entries
+        
+        #The bits for the quotients by q_divisor: 
+        num_bits_q_total = np.sum((np.abs(arr_minus_mean_filt)) // q_divisor_filtered) + num_arr_entries
+        
+        #The bits for the remainders: 
+        num_bits_r_total = np.sum(np.ceil(np.log2(num_r_filtered)))
+        
+        #Compute the total number of bits in compressed form: 
+        num_bits_compressed_total = num_bits_supp_inds + num_bits_q_total + num_bits_r_total + num_bits_sign_total
+        
+        return num_bits_compressed_total
+        
+    @staticmethod 
+    def compress_2D_static(arr_2D, q_divisor_mat, num_r_mat, filtered_mean_mat, r_bitarray_dict, abs_error=0.0001, supp_inds_vec=[], orig_dim=67, fill_value=-999.0, compression_mode=1):
+        """
+        Perform a variation of Rice-Golomb compression on a single matrix. 
+        """
+        
+        if compression_mode == 2 or compression_mode == 4:
+            #Replace lower-triangular half with fill_value, since we don't need to store it. 
+            for j in range(orig_dim):
+                for i in range(j+1, orig_dim):
+                    arr_2D[i, j] = fill_value
+                    if np.ma.isMaskedArray(arr_2D):
+                        arr_2D[i, j] = np.ma.masked 
+        
+        if len(supp_inds_vec)==0:
+            supp_inds_vec = Multiple_Sounding_Compression.compute_support_indices_2D_static(arr_2D, fill_value=fill_value)
+        
+        num_bits_compressed = int(Multiple_Sounding_Compression.compute_number_compressed_bits_2D_static(arr_2D, q_divisor_mat=q_divisor_mat, num_r_mat=num_r_mat, filtered_mean_mat=filtered_mean_mat, orig_dim=orig_dim, fill_value=fill_value))
+        
+        if np.ma.isMaskedArray(arr_2D):
+            ind_arr = np.where(~arr_2D.mask)
+        else:
+            ind_arr = np.where(arr_2D != fill_value)
+        arr_filtered = arr_2D[ind_arr]
+        q_divisor_filtered = q_divisor_mat[ind_arr]
+        num_r_filtered = num_r_mat[ind_arr]
+        filtered_mean_filt = filtered_mean_mat[ind_arr]
+        
+        arr_minus_mean_filt = arr_filtered - filtered_mean_filt
+        
+        num_arr_entries = arr_minus_mean_filt.shape[0]
+        
+        #Create 0,1 array corresponding to the signs. (1 = +, 0 = -) 
+        arr_signs = np.sign(arr_minus_mean_filt)
+        #arr_signs[arr_signs >= 0] = 1
+        arr_signs[arr_signs == 0] = 1  #No need to rewrite correct entries. 
+        arr_signs[arr_signs < 0] = 0 
+        
+        
+        #Compute an array of the coarse estimates of the element absolute values, i.e., which multiple of q_divisor. 
+        arr_q = ( np.abs(arr_minus_mean_filt) ) // q_divisor_filtered 
+        
+        #Compute the quantized remainders. 
+        arr_r = (np.abs(arr_minus_mean_filt) - (q_divisor_filtered * arr_q)) // abs_error
+        
+        #Number of bits needed to store remainder. 
+        num_bits_r_filtered = np.ceil(np.log2(num_r_filtered))
+        
+        #Initialize bit array for the compressed version of the 2D array: 
+        arr_compressed_01 = bitarray(num_bits_compressed, endian='big') 
+        arr_compressed_01.setall(1)
+        
+        #The format will be as follows: We will store bits corresponding to the support indices 
+        #(the indices of included rows, assumed to be the same for columns). 
+        #Then, for each filtered array entry, we store a bit for the sign, bits for the quotient, 
+        #and bits for the remainder. 
+        
+        #Keep a variable indexing our position in the bitarray. 
+        i_bit = 0
+        
+        #First, store support indices: 
+        arr_compressed_01[i_bit:i_bit + orig_dim] = bitarray([i for i in supp_inds_vec])
+        i_bit = int(i_bit + orig_dim)
+        
+        for i_arr in range(int(num_arr_entries)):
+            arr_sign_i = arr_signs[i_arr]
+            arr_q_i = arr_q[i_arr]
+            arr_r_i = arr_r[i_arr] 
+            num_bits_r_i = num_bits_r_filtered[i_arr] 
+            
+            #Insert sign bit
+            if int(arr_compressed_01[i_bit]) != int(arr_sign_i): #Don't rewrite if not necessary
+                arr_compressed_01[i_bit] = int(arr_sign_i)
+            
+            #Advance position by one (sign) bit. 
+            i_bit = i_bit + 1
+            
+            #Insert q bits: ones followed by a terminating zero
+            #arr_compressed_01[i_bit:i_bit + int(arr_q_i)] = 1 #Don't rewrite if unnecessary. 
+            arr_compressed_01[i_bit + int(arr_q_i)] = 0
+            
+            #Advance position by the appropriate number of quotient bits. 
+            i_bit = i_bit + int(arr_q_i) + 1
+            
+            #Insert r bits. 
+            if num_bits_r_i > 0:
+                #Get the proper remainder bits from the proper stored dictionary:
+                i_dict = ind_arr[0][i_arr]
+                j_dict = ind_arr[1][i_arr]
+                arr_compressed_01[i_bit:i_bit + int(num_bits_r_i)] = r_bitarray_dict[i_dict, j_dict][int(arr_r_i)]
+                
+            #Advance position by the appropriate number of remainder bits. 
+            i_bit = i_bit + int(num_bits_r_i) 
+            
+        arr_compressed_bytes = arr_compressed_01.tobytes()
+        
+        return(arr_compressed_bytes)
+    
+    
+    
 
     
     def remove_bad_soundings(self, compression_mode, abs_error):
@@ -444,33 +651,51 @@ class Multiple_Sounding_Compression:
             max_num_bits = 11
             delta_sq_2_bsq = (abs_error**2)*np.power(2, 2*max_num_bits)
             
-            data_array_nofill = np.zeros(self.data_array.shape)
-            data_array_nofill[:] = self.data_array[:]
-            ind_fillvalue = np.where(self.data_array == fill_value)
-            N_fillvalue = len(ind_fillvalue[0])
-            data_array_nofill[ind_fillvalue] = 0.0 
-            data_array_minus_median_nofill = np.zeros(self.data_array.shape)
+            #data_array_nofill = np.zeros(self.data_array.shape)
+            data_array_altered = np.zeros(self.data_array.shape)
             
-            vv_temp = np.zeros((num_soundings,)) 
-            data_array_median = np.zeros((num_soundings, orig_dim, orig_dim,))
-            for i in range(orig_dim):
-                for j in range(orig_dim):
-                    vv_temp[:] = self.data_array[:, i, j]
-                    ind_valid = np.where(vv_temp != fill_value)
+            #ADDING THIS 
+            if np.ma.isMaskedArray(self.data_array):
+                data_array_altered[:, :, :] = self.data_array.filled(0)[:, :, :]
+                ind_fillvalue = np.where(self.data_array.mask)
+                N_fillvalue = len(ind_fillvalue[0]) 
+            else:
+                data_array_altered[:] = self.data_array[:]
+                ind_fillvalue = np.where(self.data_array == fill_value)
+                N_fillvalue = len(ind_fillvalue[0])
+                data_array_altered[ind_fillvalue] = 0.0 
+            
+            
+            def subtract_data_array_median(t):
+                i, j = t 
+                if np.ma.isMaskedArray(self.data_array):
+                    if np.any(~self.data_array.mask[:,i,j]):
+                        data_array_altered[~self.data_array.mask[:,i,j], i, j] -= np.ma.median(self.data_array[:, i, j])
+                else:
+                    ind_valid = np.where(self.data_array[:, i, j] != fill_value)
                     # Avoid warning on taking the mean of an empty slice 
                     if len(ind_valid[0]) > 0:
-                        data_array_median[ind_valid[0],i,j] = np.median(vv_temp[ind_valid])
+                        data_array_altered[ind_valid[0],i,j] -= np.median(self.data_array[ind_valid[0], i, j])
+                
+                return 
             
-            data_array_minus_median_nofill = data_array_nofill - data_array_median
-            data_array_minus_med_sq_nmlzd =  np.square(data_array_minus_median_nofill)
-            sounding_processed_sums = np.sum(np.sum(data_array_minus_med_sq_nmlzd, axis=1), axis=1)
+            tasks = product(range(orig_dim), range(orig_dim)) 
+            
+            with ThreadPool() as pool:
+                pool.map(subtract_data_array_median, tasks) 
+            
+            data_array_altered =  np.square(data_array_altered, out=data_array_altered)
+            sounding_processed_sums = np.sum(np.sum(data_array_altered, axis=1), axis=1)
+            
             N_total = self.data_array.size - N_fillvalue
             thresh_temp = delta_sq_2_bsq*N_total
             while np.sum(sounding_processed_sums) > thresh_temp:
                 ind_temp = np.argmax(sounding_processed_sums)
                 sounding_processed_sums[ind_temp] = 0
-                self.data_array[ind_temp, :, :] = fill_value
-    
+                self.data_array[ind_temp, :, :] = fill_value 
+                #ADDING THIS
+                if np.ma.isMaskedArray(self.data_array):
+                    self.data_array[ind_temp, :, :] = np.ma.masked 
     
     
     def compress_3D(self, max_error=0.00005, compression_mode=1):
@@ -496,12 +721,14 @@ class Multiple_Sounding_Compression:
             #supp_inds_mat is num_soundings x orig_dim, 0,1 matrix with 1's in support indices for each sounding. 
             
             self.set_compression_parameters_3D(arr_3D=arr_3D, abs_error=abs_error)
-
+            
             orig_dim = int(self.orig_dim)
             num_soundings = int(self.num_soundings) 
             q_divisor_mat = self.q_divisor_mat
             num_r_mat = self.num_r_mat 
             filtered_mean_mat = self.filtered_mean_mat 
+            fill_value = self.fill_value
+            
 
             #Store 1 byte for the compression mode, four bytes for the original dimension, 8 bytes for the num_soundings, 
             #8 bytes for abs_error, 8*orig_dim*orig_dim bytes for each of T_left and T_right, 
@@ -544,10 +771,10 @@ class Multiple_Sounding_Compression:
                     num_r_mat_byte_list.append(num_r_mat_bytes)
             
             
-            T_left_row_sets_bitarray = bitarray([i == 1 for i in T_left_row_sets.flatten()], endian='big')
+            T_left_row_sets_bitarray = bitarray(list(T_left_row_sets.astype(int).flatten()), endian='big')
             T_left_row_sets_byte_list = [T_left_row_sets_bitarray.tobytes()]
             
-            T_right_col_sets_bitarray = bitarray([i == 1 for i in T_right_col_sets.flatten()], endian='big')
+            T_right_col_sets_bitarray = bitarray(list(T_right_col_sets.astype(int).flatten()), endian='big')
             T_right_col_sets_byte_list = [T_right_col_sets_bitarray.tobytes()] 
             
             compressed_byte_list += T_left_byte_list
@@ -570,19 +797,20 @@ class Multiple_Sounding_Compression:
             #Collect bytes for each individual sounding, and insert bytes for their indices: 
             sounding_byte_list = []
             sounding_byte_ind = num_compressed_bytes_total
-            
-            for i_sounding in tqdm(range(num_soundings), disable=not self.progress_bar):
-                
-                arr_2D = arr_3D[i_sounding, :, :]
-                supp_inds_vec = supp_inds_mat[i_sounding, :]
-                arr_compressed_bytes = self.compress_2D(arr_2D=arr_2D, abs_error=abs_error, supp_inds_vec=supp_inds_vec)
-                sounding_byte_list.append(arr_compressed_bytes)
 
+                           
+            r_bitarray_dict = self.r_bitarray_dict 
+            tasks = [(arr_3D[i_sounding, :, :], q_divisor_mat, num_r_mat, filtered_mean_mat, r_bitarray_dict, abs_error, supp_inds_mat[i_sounding, :], orig_dim, fill_value, compression_mode) for i_sounding in range(num_soundings)] 
+            chunksize = get_chunksize(num_soundings) 
+            with threadpool_limits(limits=1, user_api='blas'):
+                with mp.Pool() as pool:
+                    sounding_byte_list = pool.starmap(Multiple_Sounding_Compression.compress_2D_static, tasks, chunksize=chunksize)
+                
+            for i_sounding in range(num_soundings):
                 sounding_byte_ind_bytes = struct.pack('Q', sounding_byte_ind)
                 compressed_byte_list.append(sounding_byte_ind_bytes) 
-                
-                sounding_byte_ind = int(sounding_byte_ind + len(arr_compressed_bytes))
-                
+                sounding_byte_ind = int(sounding_byte_ind + len(sounding_byte_list[i_sounding]))
+                     
             
             #Append the sounding bytes 
             compressed_byte_list += sounding_byte_list
@@ -598,6 +826,7 @@ class Multiple_Sounding_Compression:
                 N_newbytes = len(compressed_byte_list[i])
                 compressed_byte_array[i_byte:i_byte + N_newbytes] = compressed_byte_list[i]
                 i_byte = i_byte + N_newbytes
+            
             
             return(compressed_byte_array)
         
@@ -660,7 +889,7 @@ class Multiple_Sounding_Compression:
                     num_r_mat_bytes = struct.pack('Q', int(num_r_mat[i, j]))
                     num_r_mat_byte_list.append(num_r_mat_bytes)
             
-            T_left_row_sets_bitarray = bitarray([i == 1 for i in T_left_row_sets.flatten()], endian='big')
+            T_left_row_sets_bitarray = bitarray(list(T_left_row_sets.astype(int).flatten()), endian='big')
             T_left_row_sets_byte_list = [T_left_row_sets_bitarray.tobytes()]
             
             compressed_byte_list += T_left_byte_list
@@ -681,24 +910,18 @@ class Multiple_Sounding_Compression:
             sounding_byte_list = []
             sounding_byte_ind = num_compressed_bytes_total
             
-            for i_sounding in tqdm(range(num_soundings), disable=not self.progress_bar):
-                
-                arr_2D = arr_3D[i_sounding, :, :]
-                
-                #Replace lower-triangular half with fill_value, since we don't need to store it. 
-                for j in range(1, orig_dim):
-                    for i in range(j, orig_dim):
-                        arr_2D[i, j] = fill_value
-                
-                supp_inds_vec = supp_inds_mat[i_sounding, :]
-                arr_compressed_bytes = self.compress_2D(arr_2D=arr_2D, abs_error=abs_error, supp_inds_vec=supp_inds_vec)
-                sounding_byte_list.append(arr_compressed_bytes)
-
+            r_bitarray_dict = self.r_bitarray_dict 
+            tasks = [(arr_3D[i_sounding, :, :], q_divisor_mat, num_r_mat, filtered_mean_mat, r_bitarray_dict, abs_error, supp_inds_mat[i_sounding, :], orig_dim, fill_value, compression_mode) for i_sounding in range(num_soundings)] 
+            
+            chunksize = get_chunksize(num_soundings) 
+            with threadpool_limits(limits=1, user_api='blas'):
+                with mp.Pool() as pool:
+                    sounding_byte_list = pool.starmap(Multiple_Sounding_Compression.compress_2D_static, tasks, chunksize=chunksize)
+                    
+            for i_sounding in range(num_soundings):
                 sounding_byte_ind_bytes = struct.pack('Q', sounding_byte_ind)
                 compressed_byte_list.append(sounding_byte_ind_bytes) 
-                
-                sounding_byte_ind = int(sounding_byte_ind + len(arr_compressed_bytes))
-                
+                sounding_byte_ind = int(sounding_byte_ind + len(sounding_byte_list[i_sounding]))
             
             #Append the sounding bytes 
             compressed_byte_list += sounding_byte_list
@@ -721,19 +944,263 @@ class Multiple_Sounding_Compression:
         else:
             print("Unknown compression mode.")
             return 
+
+        
         
         
 class Multiple_Sounding_Decompression:
 
-    def __init__(self, compressed_data_bytes=None, progress_bar=False):
+    def __init__(self, compressed_data_bytes=None):
         """
         Take in the compressed_data_bytes returned by compress_3D function 
         from the Multiple_Sounding_Compression class. 
         """
 
         self.compressed_data_bytes = compressed_data_bytes 
-        self.progress_bar = progress_bar
+    
+    @staticmethod 
+    def invert_transformation_static(arr_2D, T_left_inv_list, T_right_inv_list, orig_dim=67):
+        """
+        Apply the inverse transformation to the 2D array. 
+        """
+        if arr_2D.shape[0] > 0:
+            ind_T_inv = int(orig_dim - arr_2D.shape[0])
+            T_left_inv = T_left_inv_list[ind_T_inv]
+            T_right_inv = T_right_inv_list[ind_T_inv] 
 
+            arr_2D_invtrans = np.matmul(T_left_inv, np.matmul(arr_2D, T_right_inv)) 
+        else: 
+            arr_2D_invtrans = np.array([])
+        return arr_2D_invtrans 
+    
+    @staticmethod 
+    def decompress_2D_static(sounding_bytes, T_left_row_sets, T_right_col_sets, T_left_inv_list, T_right_inv_list, q_divisor_mat, num_r_mat, filtered_mean_mat, abs_error, orig_dim, fill_value=-999.0, compression_mode=1):
+        """
+        Decompress the bytes for a single sounding. 
+        """
+        
+        if compression_mode == 1 or compression_mode == 3:
+            
+            orig_dim = int(orig_dim)
+            abs_error = abs_error
+
+            sounding_bits = bitarray(endian='big')
+            sounding_bits.frombytes(bytes(sounding_bytes))
+            
+            i_bit = 0
+
+            #Get support index bits: 
+            supp_inds_vec = False + np.zeros((orig_dim,))
+            for i in range(orig_dim):
+                if sounding_bits[i_bit]:
+                    supp_inds_vec[i] = True 
+                i_bit = i_bit + 1
+            
+            num_supp_inds = int(np.sum(supp_inds_vec))
+            
+            if num_supp_inds == 0:
+                num_arr_entries = 0
+            elif np.all(supp_inds_vec[-num_supp_inds:] == 1):
+                num_arr_entries = int(num_supp_inds**2)
+                ind_rowcol_sets = int(orig_dim - num_supp_inds)
+            else:
+                num_arr_entries = int(orig_dim**2) 
+                ind_rowcol_sets = 0 
+            
+            if num_arr_entries > 0:
+                Tleftrows_vec = T_left_row_sets[ind_rowcol_sets, :]
+                Trightcols_vec = T_right_col_sets[ind_rowcol_sets, :] 
+                arr_2D_supp_mat = np.matmul(Tleftrows_vec.reshape((orig_dim, 1)), Trightcols_vec.reshape((1, orig_dim)))
+                ind_arr_2D = np.where(arr_2D_supp_mat == 1)
+                
+                arr_entries = np.zeros((num_arr_entries,))
+                q_divisors_filtered = q_divisor_mat[ind_arr_2D]
+                num_r_filtered = num_r_mat[ind_arr_2D] 
+                filtered_mean_filtered = filtered_mean_mat[ind_arr_2D]
+                
+                entry_signs_filtered = np.zeros((num_arr_entries,))
+                N_rbits_filtered = np.ceil(np.log2(num_r_filtered))
+                N_qbits_filtered = np.zeros((num_arr_entries,)) 
+                entry_r_part_initial_filtered = np.zeros((num_arr_entries,)) 
+                
+                r_bit_array = bitarray(64, endian='little')
+            
+            
+            for i_arr in range(num_arr_entries):
+                
+                #Get sign of array entry: 
+                if sounding_bits[i_bit] == 0:
+                    entry_signs_filtered[i_arr] = -1.0 
+                else:
+                    entry_signs_filtered[i_arr] = 1.0 
+                i_bit = i_bit + 1
+                
+                #Compute the multiple of q_divisor: 
+                while sounding_bits[i_bit] == 1:
+                    N_qbits_filtered[i_arr] = N_qbits_filtered[i_arr] + 1 #FOR TESTING 
+                    i_bit = i_bit + 1
+                i_bit = i_bit + 1
+                
+                
+                #Get the r bits 
+                N_rbits = int(N_rbits_filtered[i_arr]) 
+
+                #Now the remainder: 
+                r_bit_array.setall(0)
+                if N_rbits > 0:
+                    r_bit_array[:N_rbits] = sounding_bits[i_bit + N_rbits - 1 : i_bit - 1 : -1]
+                    i_bit = i_bit + N_rbits
+                entry_r_part_initial_filtered[i_arr] = struct.unpack('Q', r_bit_array.tobytes())[0]
+                
+                
+            
+            #Create an initial 2D array populated with fill value. 
+            arr_2D = fill_value + np.zeros((orig_dim, orig_dim,))
+            
+            if num_arr_entries > 0:
+                
+                entry_q_part_filtered = N_qbits_filtered * q_divisors_filtered
+                entry_r_part_filtered = abs_error*(entry_r_part_initial_filtered + 0.5)
+                entry_value_minus_mean_filtered = entry_signs_filtered * (entry_q_part_filtered + entry_r_part_filtered)
+                arr_entries[:] = (entry_value_minus_mean_filtered + filtered_mean_filtered)[:] 
+                
+                #Fill in nonzero entries of a 2D array. 
+                arr_2D_0_dim = int(np.sqrt(num_arr_entries))
+                arr_2D_0 = np.zeros((arr_2D_0_dim, arr_2D_0_dim,)) 
+                arr_2D_0[:] = arr_entries.reshape((arr_2D_0_dim, arr_2D_0_dim,))[:]
+
+                #Apply inverse transformation: 
+                arr_2D_invtrans = Multiple_Sounding_Decompression.invert_transformation_static(arr_2D_0, T_left_inv_list, T_right_inv_list, orig_dim) 
+                
+                #Reinsert fill value: 
+                supp_inds_invtrans = np.zeros((orig_dim, orig_dim,))
+                for i in range(orig_dim):
+                    if supp_inds_vec[i] == 1:
+                        supp_inds_invtrans[i, np.where(supp_inds_vec == 1)[0]] = 1
+                ind_arr_2D_invtrans = np.where(supp_inds_invtrans == 1)
+                
+                arr_2D[ind_arr_2D_invtrans] = arr_2D_invtrans[ind_arr_2D_invtrans] 
+            
+            return(arr_2D)
+        
+        
+        elif compression_mode == 2 or compression_mode == 4:
+            
+            orig_dim = int(orig_dim)
+            abs_error = abs_error
+
+            sounding_bits = bitarray(endian='big')
+            sounding_bits.frombytes(bytes(sounding_bytes))
+            
+            i_bit = 0
+
+            #Get support index bits: 
+            supp_inds_vec = False + np.zeros((orig_dim,))
+            for i in range(orig_dim):
+                if sounding_bits[i_bit]:
+                    supp_inds_vec[i] = True 
+                i_bit = i_bit + 1
+            
+            num_supp_inds = int(np.sum(supp_inds_vec))
+            
+            if num_supp_inds == 0:
+                num_arr_entries = 0
+            elif np.all(supp_inds_vec[-num_supp_inds:] == 1):
+                num_arr_entries = int((1.0/2.0)*num_supp_inds*(num_supp_inds + 1)) 
+                ind_rowcol_sets = int(orig_dim - num_supp_inds)
+            else:
+                num_arr_entries = int((1.0/2.0)*orig_dim*(orig_dim + 1)) 
+                ind_rowcol_sets = 0 
+            
+            if num_arr_entries > 0:
+                Tleftrows_vec = T_left_row_sets[ind_rowcol_sets, :]
+                Trightcols_vec = T_right_col_sets[ind_rowcol_sets, :] 
+                #arr_2D_supp_mat = np.matmul(Tleftrows_vec.reshape((orig_dim, 1)), Trightcols_vec.reshape((1, orig_dim)))
+                
+                arr_2D_supp_mat = np.zeros((orig_dim, orig_dim,))
+                for i in range(orig_dim):
+                    if Tleftrows_vec[i] == 1:
+                        for j in range(i, orig_dim):
+                            if Trightcols_vec[j] == 1:
+                                arr_2D_supp_mat[i, j] = 1
+                
+                ind_arr_2D = np.where(arr_2D_supp_mat == 1)
+                
+                arr_entries = np.zeros((num_arr_entries,))
+                q_divisors_filtered = q_divisor_mat[ind_arr_2D]
+                num_r_filtered = num_r_mat[ind_arr_2D] 
+                filtered_mean_filtered = filtered_mean_mat[ind_arr_2D]
+                
+                entry_signs_filtered = np.zeros((num_arr_entries,))
+                N_rbits_filtered = np.ceil(np.log2(num_r_filtered))
+                N_qbits_filtered = np.zeros((num_arr_entries,)) 
+                entry_r_part_initial_filtered = np.zeros((num_arr_entries,)) 
+                
+                r_bit_array = bitarray(64, endian='little')
+                
+            
+            for i_arr in range(num_arr_entries):
+                
+                #Get sign of array entry: 
+                if sounding_bits[i_bit] == 0:
+                    entry_signs_filtered[i_arr] = -1.0 
+                else:
+                    entry_signs_filtered[i_arr] = 1.0 
+                i_bit = i_bit + 1
+                
+                #Compute the multiple of q_divisor: 
+                while sounding_bits[i_bit] == 1:
+                    N_qbits_filtered[i_arr] = N_qbits_filtered[i_arr] + 1 #FOR TESTING 
+                    i_bit = i_bit + 1
+                i_bit = i_bit + 1
+                
+                
+                #Get the r bits 
+                N_rbits = int(N_rbits_filtered[i_arr]) 
+
+                #Now the remainder: 
+                r_bit_array.setall(0)
+                if N_rbits > 0:
+                    r_bit_array[:N_rbits] = sounding_bits[i_bit + N_rbits - 1 : i_bit - 1 : -1]
+                    i_bit = i_bit + N_rbits
+                entry_r_part_initial_filtered[i_arr] = struct.unpack('Q', r_bit_array.tobytes())[0]
+                
+            
+            #Create an initial 2D array populated with fill value. 
+            arr_2D = fill_value + np.zeros((orig_dim, orig_dim,))
+            
+            if num_arr_entries > 0:
+                
+                entry_q_part_filtered = N_qbits_filtered * q_divisors_filtered
+                entry_r_part_filtered = abs_error*(entry_r_part_initial_filtered + 0.5)
+                entry_value_minus_mean_filtered = entry_signs_filtered * (entry_q_part_filtered + entry_r_part_filtered)
+                arr_entries[:] = (entry_value_minus_mean_filtered + filtered_mean_filtered)[:] 
+                
+                #Fill in nonzero entries of a 2D array. 
+                arr_2D_0_dim = int( (np.sqrt(8.0*num_arr_entries + 1.0) - 1.0)/2.0 )
+                arr_2D_0 = np.zeros((arr_2D_0_dim, arr_2D_0_dim,)) 
+                i_arr = 0
+                for i in range(arr_2D_0_dim):
+                    for j in range(i, arr_2D_0_dim):
+                        arr_2D_0[i, j] = arr_entries[i_arr]
+                        if j > i:
+                            arr_2D_0[j, i] = arr_entries[i_arr]
+                        i_arr = i_arr + 1 
+               
+                #Apply inverse transformation: 
+                arr_2D_invtrans = Multiple_Sounding_Decompression.invert_transformation_static(arr_2D_0, T_left_inv_list, T_right_inv_list, orig_dim) 
+
+                #Reinsert fill value: 
+                supp_inds_invtrans = np.zeros((orig_dim, orig_dim,))
+                for i in range(orig_dim):
+                    if supp_inds_vec[i] == 1:
+                        supp_inds_invtrans[i, np.where(supp_inds_vec == 1)[0]] = 1
+                ind_arr_2D_invtrans = np.where(supp_inds_invtrans == 1)
+                
+                arr_2D[ind_arr_2D_invtrans] = arr_2D_invtrans[ind_arr_2D_invtrans] 
+            
+            return(arr_2D)
+            
     
     def invert_transformation(self, arr_2D):
         """
@@ -755,7 +1222,7 @@ class Multiple_Sounding_Decompression:
         Decompress the bytes for a single sounding. 
         """
         
-        if self.compression_mode == 1 or compression_mode == 3:
+        if self.compression_mode == 1 or self.compression_mode == 3:
             
             orig_dim = int(self.orig_dim)
             abs_error = self.abs_error
@@ -860,7 +1327,7 @@ class Multiple_Sounding_Decompression:
             return(arr_2D)
         
         
-        elif self.compression_mode == 2 or compression_mode == 4:
+        elif self.compression_mode == 2 or self.compression_mode == 4:
             
             orig_dim = int(self.orig_dim)
             abs_error = self.abs_error
@@ -1107,14 +1574,14 @@ class Multiple_Sounding_Decompression:
             self.filtered_mean_mat = filtered_mean_mat
             self.q_divisor_mat = q_divisor_mat
             self.num_r_mat = num_r_mat
-            sounding_byte_ind_list = sounding_byte_ind_list 
+            self.sounding_byte_ind_list = sounding_byte_ind_list 
             
             if sounding_indices==None:
                 sounding_indices = [i for i in range(num_soundings)]
             
-            arr_3D = np.zeros((len(sounding_indices), orig_dim, orig_dim,))
             
-            for i in tqdm(range(len(sounding_indices)), disable=not self.progress_bar): 
+            sounding_bytes_list = []
+            for i in range(len(sounding_indices)): 
                 sounding_ind = int(sounding_indices[i])
                 sounding_byte_ind = sounding_byte_ind_list[sounding_ind]
                 if sounding_ind == num_soundings - 1:
@@ -1122,9 +1589,13 @@ class Multiple_Sounding_Decompression:
                 else:
                     sounding_byte_ind_2 = sounding_byte_ind_list[sounding_ind + 1]
                     sounding_bytes = self.compressed_data_bytes[sounding_byte_ind:sounding_byte_ind_2]
-                    
-                arr_2D = self.decompress_2D(sounding_bytes, fill_value=fill_value) #Also applies inverse transformation. 
-                arr_3D[i, :, :] = arr_2D[:, :]
+                sounding_bytes_list.append(sounding_bytes)
+            
+            tasks = [(sounding_bytes_list[i], T_left_row_sets, T_right_col_sets, T_left_inv_list, T_right_inv_list, q_divisor_mat, num_r_mat, filtered_mean_mat, abs_error, orig_dim, fill_value, compression_mode) for i in range(len(sounding_indices))] 
+            chunksize = get_chunksize(len(sounding_indices)) 
+            with threadpool_limits(limits=1, user_api='blas'):
+                with mp.Pool() as pool:
+                    arr_3D = np.array(pool.starmap(Multiple_Sounding_Decompression.decompress_2D_static, tasks, chunksize=chunksize)) 
                 
             return arr_3D
         
@@ -1221,20 +1692,28 @@ class Multiple_Sounding_Decompression:
             if sounding_indices==None:
                 sounding_indices = [i for i in range(num_soundings)]
             
-            arr_3D = np.zeros((len(sounding_indices), orig_dim, orig_dim,))
             
-            for i in tqdm(range(len(sounding_indices)), disable=not self.progress_bar): 
+            sounding_bytes_list = []
+            for i in range(len(sounding_indices)): 
                 sounding_ind = int(sounding_indices[i])
                 sounding_byte_ind = sounding_byte_ind_list[sounding_ind]
                 if sounding_ind == num_soundings - 1:
-                    sounding_bytes = self.compressed_data_bytes[sounding_byte_ind:]
+                    sounding_bytes = self.compressed_data_bytes[sounding_byte_ind:] 
+                    
                 else:
                     sounding_byte_ind_2 = sounding_byte_ind_list[sounding_ind + 1]
                     sounding_bytes = self.compressed_data_bytes[sounding_byte_ind:sounding_byte_ind_2]
-                
-                arr_2D = self.decompress_2D(sounding_bytes, fill_value=fill_value) #Also applies inverse transformation. 
-                arr_3D[i, :, :] = arr_2D[:, :]
-                
+                    
+                sounding_bytes_list.append(sounding_bytes)
+            
+            tasks = [(sounding_bytes_list[i], T_left_row_sets, T_right_col_sets, T_left_inv_list, T_right_inv_list, q_divisor_mat, num_r_mat, filtered_mean_mat, abs_error, orig_dim, fill_value, compression_mode) for i in range(len(sounding_indices))] 
+            
+            chunksize = get_chunksize(len(sounding_indices)) 
+            with threadpool_limits(limits=1, user_api='blas'):
+                with mp.Pool() as pool:
+                    arr_3D = np.array(pool.starmap(Multiple_Sounding_Decompression.decompress_2D_static, tasks, chunksize=chunksize)) 
+
+            
             return arr_3D
             
         

@@ -1,10 +1,112 @@
-# tropess_compression
+# TROPESS Averaging Kernel and Covariance Compression and Decompression Tool.
 
-The primary MUSES compression algorithms are contained in code/MUSES_compression_v2.py. These currently are designed to compress all large (3D) data structures in L2 data files.
+This tool can be used to decompress large (3D) data structures in TROPESS L2 full product files.
 
-The algorithm and code usage is documented in documentation/MUSES_compression.pdf. The code requires the Python modules listed in requirements.txt. Instructions for setting up a Python virtual environment and installing these requirements are contained in documentation/MUSES_compression_instructions.txt.
+## Environment Setup
 
-Furthermore, sample programs code/MUSES_compress_to_file_v2.py and code/MUSES_decompress_from_file_v2.py have been written produced a compressed version of a typical L2 product data file, and subsequently decompress it. Usage of these programs is also documented in documentation/MUSES_compression_instructions.txt. These sample programs may need to be updated for new MUSES data file formats.
+### Using Pixi (Recommended)
+
+[Pixi](https://pixi.sh) provides a fast, cross-platform package manager built on conda-forge.
+
+1. Install pixi by following the instructions at https://pixi.sh
+2. Set up the environment:
+   ```bash
+   cd tropess-compression
+   pixi install
+   ```
+3. Run commands using pixi:
+   ```bash
+   pixi run compress_tropess_file --help
+   pixi run decompress_tropess_file --help
+   ```
+
+### Using Conda
+
+Alternatively, you can use conda/mamba with the provided environment.yml file:
+
+1. Create the conda environment:
+   ```bash
+   conda env create -f environment.yml
+   ```
+   Or with mamba for faster installation:
+   ```bash
+   mamba env create -f environment.yml
+   ```
+
+2. Activate the environment:
+   ```bash
+   conda activate tropess-compression
+   ```
+
+3. Install the package in editable mode:
+   ```bash
+   pip install -e .
+   ```
+
+## Command Line Tools
+
+After environment setup, two command-line tools are available for compressing and decompressing TROPESS data files.
+
+### compress_tropess_file
+
+Compress a TROPESS product file by encoding large 3D data structures.
+
+**Usage:**
+```bash
+compress_tropess_file [--max_error MAX_ERROR] [--verbose] input_filename output_filename
+```
+
+**Positional Arguments:**
+- `input_filename` - File name of input TROPESS product to compress
+- `output_filename` - File name for the compressed output TROPESS product file
+
+**Options:**
+- `--max_error MAX_ERROR` - Maximum tolerated error for entries of compressed objects (default: 5e-05)
+- `--verbose`, `-v` - Enable additional debug logging to screen
+- `-h`, `--help` - Show help message and exit
+
+**Example:**
+```bash
+pixi run compress_tropess_file input.nc compressed_output.nc --max_error 1e-04 --verbose
+```
+
+Or with conda:
+```bash
+compress_tropess_file input.nc compressed_output.nc --max_error 1e-04 --verbose
+```
+
+### decompress_tropess_file
+
+Decompress a previously compressed TROPESS product file.
+
+**Usage:**
+```bash
+decompress_tropess_file [--verbose] input_filename output_filename
+```
+
+**Positional Arguments:**
+- `input_filename` - File name of input TROPESS product to decompress
+- `output_filename` - File name for the decompressed output TROPESS product file
+
+**Options:**
+- `--verbose`, `-v` - Enable additional debug logging to screen
+- `-h`, `--help` - Show help message and exit
+
+**Example:**
+```bash
+pixi run decompress_tropess_file compressed_input.nc decompressed_output.nc --verbose
+```
+
+Or with conda:
+```bash
+decompress_tropess_file compressed_input.nc decompressed_output.nc --verbose
+```
+
+## Additional Documentation
+
+The algorithm is documented in the [Compression of Averaging Kernels and Covariance Matrices in TROPESS L2 Ozone Archival Data Products](documentation/tropess_compression.pdf) writeup.
+
+For an example of using the software package directly to decompress individual netCDF variables, see the [example decompression Jupyter notebook](documentation/example_decompression.ipynb). 
 
 ## Copyright and Licensing Info
 Copyright (c) 2023-24 California Institute of Technology (“Caltech”). U.S. Government sponsorship acknowledged. All rights reserved.
