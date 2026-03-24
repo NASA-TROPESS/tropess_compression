@@ -106,7 +106,9 @@ decompress_tropess_file compressed_input.nc decompressed_output.nc --verbose
 
 ## Additional Documentation
 
-The algorithm is documented in [documentation/MUSES_compression.pdf](documentation/MUSES_compression.pdf). 
+The algorithm is documented in the [Compression of Averaging Kernels and Covariance Matrices in TROPESS L2 Ozone Archival Data Products](documentation/MUSES_compression.pdf) writeup.
+
+For an example of using the software package directly to decompress individual netCDF variables, see the [example decompression Jupyter notebook](documentation/example_decompression.ipynb). 
 
 ## Copyright and Licensing Info
 Copyright (c) 2023-24 California Institute of Technology (“Caltech”). U.S. Government sponsorship acknowledged. All rights reserved.
