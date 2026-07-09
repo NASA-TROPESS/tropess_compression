@@ -102,6 +102,10 @@ Or with conda:
 decompress_tropess_file compressed_input.nc decompressed_output.nc --verbose
 ```
 
+## Omitting Bad Samples When Compressing
+
+In some 3D data structures, certain samples (2D matrices indexed by the first dimension of the 3D array) have been found to contain errors, causing them to have unnaturally large-magnitude values that affect the compression algorithm. When compressing, we omit samples which are deemed to be erroneous, as determined by the "remove_bad_soundings" function in tropess_compression/akc_compression.py. When decompressing, all entries of these samples will be masked or populated with fill values. Currently, the "remove_bad_soundings" function flags bad samples by estimating the number of bits needed to encode each sample's compressed 2D matrix, and removes those that are deemed to be too large (those which cause the estimated compressed bit rate to spike above a threshold, currently set to 11 bits per data value). 
+
 ## Additional Documentation
 
 The algorithm is documented in the [Compression of Averaging Kernels and Covariance Matrices in TROPESS L2 Ozone Archival Data Products](documentation/tropess_compression.pdf) writeup.
