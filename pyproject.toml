@@ -28,12 +28,24 @@ dependencies = [
 compress_tropess_file = "tropess_compression.compress_tropess_file:main"
 decompress_tropess_file = "tropess_compression.decompress_tropess_file:main"
 
+[tool.setuptools.packages.find]
+include = ["tropess_compression*"]
+
 [tool.pixi.workspace]
 channels = ["conda-forge"]
-platforms = ["linux-64"]
+platforms = ["osx-arm64", "linux-64", "osx-64", "win-64"]
+
+[tool.pixi.dependencies]
+python = ">=3.12"
+numpy = ">=2.1.2"
+netcdf4 = ">=1.7.1"
+nco = ">=5.2.8"
+threadpoolctl = ">=3.6.0"
+pip = "*"
 
 [tool.pixi.pypi-dependencies]
 tropess-compression = { path = ".", editable = true }
 
-[tool.pixi.dependencies]
-nco = ">=5.3.6,<6"
+[tool.pixi.tasks]
+compress_tropess_file = "compress_tropess_file"
+decompress_tropess_file = "decompress_tropess_file"

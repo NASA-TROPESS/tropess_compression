@@ -2,6 +2,7 @@ import re
 import argparse
 import logging
 
+import numpy as np
 import netCDF4
 
 from .akc_compression import Multiple_Sounding_Decompression 
@@ -41,9 +42,14 @@ def decompress_variable(data_file_input, data_file_output, var_name):
     decompress_dtype = data_file_input[var_name].uncompressed_data_type
     decompress_fill_value = data_file_input[var_name].uncompressed_fill_value
     decompress_chunking = data_file_input[var_name].uncompressed_chunking
-    
+
     with RuntimeLogging(f"{var_name} writing", logger, logging.DEBUG):
-        out_var = data_file_output.createVariable(var_name, decompress_dtype, decompress_dims, fill_value=decompress_fill_value, chunksizes=decompress_chunking, **compression_kwarg)
+        # specifying chucksize seems to produce larger file sizes for some reason
+        chk=np.minimum(decompress_chunking,decompressed_data.shape)
+        #print('DEBUG:',var_name, decompress_chunking,decompressed_data.shape)
+        out_var = data_file_output.createVariable(var_name, decompress_dtype, decompress_dims, fill_value=decompress_fill_value, chunksizes=chk, **compression_kwarg)
+        # alternatively, we could just omit the chunk sizes:
+        #out_var = data_file_output.createVariable(var_name, decompress_dtype, decompress_dims, fill_value=decompress_fill_value, **compression_kwarg)
         out_var[...] = decompressed_data
     
     # Copy attributes from source variable, except for certain ignored ones
