@@ -22,6 +22,28 @@ if ver_parts[0] == 1 and ver_parts[1] < 6:
 
 logger = logging.getLogger()
 
+SYMMETRY_CHECK_BLOCK_SIZE = 1000
+
+def is_symmetric_matrix_variable(input_var, tolerance):
+    """Return True if every sounding of a 3D variable (sounding, n, n) is
+    symmetric to within tolerance. Fill values must also be symmetric. The
+    variable is read in blocks of soundings to limit memory use."""
+
+    if input_var.shape[-1] != input_var.shape[-2]:
+        return False
+
+    for start in range(0, input_var.shape[0], SYMMETRY_CHECK_BLOCK_SIZE):
+        block = np.ma.masked_invalid(np.ma.asarray(input_var[start:start + SYMMETRY_CHECK_BLOCK_SIZE]))
+        block_t = np.swapaxes(block, -1, -2)
+
+        if not np.array_equal(np.ma.getmaskarray(block), np.ma.getmaskarray(block_t)):
+            return False
+
+        if np.ma.max(np.ma.abs(block - block_t), fill_value=0.0) > tolerance:
+            return False
+
+    return True
+
 def compress_variable(data_file_input, data_file_output, var_name, max_error=DEFAULT_MAX_ERROR, is_symmetric=False):
         
     if is_symmetric:
@@ -115,7 +137,12 @@ def compress_file(input_filename, output_filename, max_error=DEFAULT_MAX_ERROR, 
 
     # Compress variables
     for var_name in vars_to_compress:
-        is_symmetric = re.match(SYMMETRIC_COMPRESSION_VAR_RE, var_name) 
+        # The name only says a matrix is a candidate for symmetric compression.
+        # Some covariances (e.g. the H2O/HDO cross covariances) are not
+        # symmetric, and symmetric compression badly distorts them, so also
+        # check the data.
+        is_symmetric = bool(re.match(SYMMETRIC_COMPRESSION_VAR_RE, var_name)) and \
+            is_symmetric_matrix_variable(data_file_input[var_name], max_error)
         compress_variable(data_file_input, data_file_output, var_name, max_error, is_symmetric=is_symmetric)
         
     data_file_input.close()
